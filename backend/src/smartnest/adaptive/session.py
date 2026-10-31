@@ -92,6 +92,10 @@ class Recommendation:
     intention_id: str
     explanation: RecommendationExplanation
     facts: RecommendationFacts
+    listing_url: str | None = None      # the best usable link: the retailer page, else the Google Shopping page
+    url_type: str | None = None         # "retailer" | "google_shopping" (``url`` is only ever a retailer link)
+    availability: str | None = None     # "in_stock" for a confirmed recommendation
+    completeness: float | None = None   # information completeness of the score, 0-1
 
 
 @dataclass
@@ -111,6 +115,8 @@ class SessionTurn:
     needs: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     pending: dict[str, tuple[Any, Any]] = field(default_factory=dict)   # field -> (current, requested)
+    #: Candidates that are NOT fully verified (stock, fit or seating unconfirmed): never a confirmed recommendation.
+    unverified_options: list[dict[str, Any]] = field(default_factory=list)
 
 
 #: Limits where a *larger* value is looser (budgets, sizes) ...
@@ -376,6 +382,7 @@ class AdaptiveSession:
         previous = self.current
         self.current = self._build_recommendation(previous)
         turn.recommendation = self.current
+        turn.unverified_options = self._unverified_options()
         turn.changed_recommendation = (
             (previous.product_id, previous.price) != (self.current.product_id, self.current.price)
             if previous and self.current else previous is not self.current)
@@ -401,6 +408,7 @@ class AdaptiveSession:
             product_id=params["product_id"], product_name=params.get("name") or params["product_id"],
             price=float(params["price"]), utility=float(params["utility"]),
             retailer=listing.get("retailer"), url=listing.get("url"),
+            url_type=listing.get("listing_url_type") or listing.get("url_type"),
             budget=effective_budget(self.agent.beliefs.value("user", "sofa_budget"),
                                     self.agent.beliefs.value("user", "total_budget")),
             requirements={k: v for k, v in self._current_requirements().items() if k != "total_budget"},
@@ -410,6 +418,11 @@ class AdaptiveSession:
             facts.feasible_count, facts.inspected_count = result.eligible_count, result.total_inspected
             if result.selected is not None:
                 facts.component_scores = dict(result.selected.breakdown.components)
+                facts.fit_status = result.selected.fit_label
+                facts.availability_status = result.selected.availability_label
+                breakdown = result.selected.breakdown
+                facts.completeness_percent = round(breakdown.completeness * 100, 1)
+                facts.unavailable_attributes = list(breakdown.unavailable)
             if len(result.ranking) > 1:
                 facts.runner_up_name = result.ranking[1].name
                 facts.runner_up_utility = result.ranking[1].utility
@@ -426,7 +439,36 @@ class AdaptiveSession:
             product_id=facts.product_id, name=facts.product_name, price=facts.price, utility=facts.utility,
             retailer=facts.retailer, url=facts.url, image_url=listing.get("image_url"),
             verified_at=listing.get("verified_at"), intention_id=intention.intention_id,
-            explanation=explanation, facts=facts)
+            explanation=explanation, facts=facts,
+            listing_url=listing.get("listing_url") or listing.get("url"),
+            url_type=listing.get("listing_url_type") or ("retailer" if listing.get("url") else None),
+            availability=outcome.optimization.selected.availability if outcome and outcome.optimization
+            and outcome.optimization.selected else None,
+            completeness=facts.completeness_percent / 100 if facts.completeness_percent is not None else None)
+
+    def _unverified_options(self, limit: int = 5) -> list[dict[str, Any]]:
+        """The best candidates that could not be fully verified, with exactly what is unverified.
+
+        Never presented as confirmed: each says which of fit / seating / availability is unconfirmed.
+        """
+        outcome = self.agent.last_outcomes.get(SELECT)
+        result = outcome.optimization if outcome is not None else None
+        if result is None or not result.unverified:
+            return []
+        listings = {(r.get("source_agent_id"), r["product_id"]): r for r in self.source.current_listings}
+        options = []
+        for e in result.unverified[:limit]:
+            listing = listings.get((e.source_agent_id, e.product_id), {})
+            options.append({
+                "product_id": e.product_id, "name": e.name, "price": e.price, "utility": e.utility,
+                "completeness": e.completeness, "unavailable": e.unavailable, "gaps": list(e.gaps),
+                "availability": e.availability, "availability_label": e.availability_label,
+                "fit_label": e.fit_label, "why": list(e.reasons),
+                "merchant": listing.get("merchant") or listing.get("retailer"),
+                "listing_url": listing.get("listing_url") or listing.get("url"),
+                "url_type": listing.get("listing_url_type") or listing.get("url_type"),
+            })
+        return options
 
     # ══ Knowledge ════════════════════════════════════════════════════════
 
@@ -478,12 +520,14 @@ class AdaptiveSession:
                     "seating_capacity": listing["seating_capacity"], "material": listing["material"],
                     "colour": listing["colour"], "style": listing["style"], "availability": listing["availability"],
                     "rating": listing["rating"], "review_count": listing["review_count"],
-                    "retailer": listing.get("retailer"), "url": listing["url"], "image_url": listing.get("image_url"),
+                    "retailer": listing.get("retailer"), "url": listing.get("url"), "image_url": listing.get("image_url"),
+                    "url_type": listing.get("url_type"), "product_page_url": listing.get("product_page_url"),
                     "verified_at": listing["verified_at"],
                 }
                 attributes = {k: v for k, v in attributes.items() if v is not None}
-                provenance = Provenance(source=result.provider_id, source_type="web", url=listing["url"],
-                                        retrieved_at=result.retrieved_at, method="google_search_grounding",
+                provenance = Provenance(source=result.provider_id, source_type="web", url=listing.get("url") or listing.get("product_page_url"),
+                                        retrieved_at=result.retrieved_at,
+                                        method=listing.get("discovery_method", "google_search_grounding"),
                                         inferred_fields=list(listing.get("inferred_fields", [])))
                 existing = self.knowledge.get(knowledge_id)
                 if existing is None:

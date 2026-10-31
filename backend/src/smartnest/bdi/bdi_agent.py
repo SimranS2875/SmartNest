@@ -393,8 +393,11 @@ class BDIAgent(BaseAgent):
         elif kind == EventType.ROOM_UPDATE.value:
             width = first("max_width_cm", "room_width", "width_cm")
             depth = first("max_depth_cm", "room_depth", "depth_cm")
-            if width is None and depth is None:
-                problems.append("room event carried no width or depth")
+            height = first("max_height_cm", "room_height", "height_cm")
+            if width is None and depth is None and height is None:
+                problems.append("room event carried no width, depth or height")
+            if height is not None:
+                user("max_height_cm", height)
             if width is not None:
                 user("max_width_cm", width)
             if depth is not None:
@@ -712,6 +715,7 @@ class BDIAgent(BaseAgent):
             "candidates_inspected": result.total_inspected,
             "eligible": result.eligible_count,
             "rejected": result.rejected_count,
+            "fit_not_verified": result.unverified_count,
             "ranking": [{"rank": e.rank, "product_id": e.product_id, "source_agent_id": e.source_agent_id,
                          "price": e.price, "utility": e.utility} for e in result.ranking[:5]],
             "rejected_candidates": [{"product_id": e.product_id, "reasons": e.reasons}

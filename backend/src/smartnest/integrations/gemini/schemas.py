@@ -241,6 +241,11 @@ class RecommendationFacts(BaseModel):
     budget: float | None = None
     requirements: dict[str, Any] = Field(default_factory=dict)
     rejected_examples: list[str] = Field(default_factory=list)
+    fit_status: str | None = None    # "Fit verified" / "Fit not verified" / "No room limits specified"
+    availability_status: str | None = None     # "In stock" (a confirmed recommendation is always in stock)
+    url_type: str | None = None                # "retailer" | "google_shopping"
+    completeness_percent: float | None = None  # share of the applicable scoring criteria that had data
+    unavailable_attributes: list[str] = Field(default_factory=list)   # needed for scoring but not stated
 
 
 class RecommendationExplanation(BaseModel):

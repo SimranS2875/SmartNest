@@ -484,11 +484,13 @@ class TestFailures:
         assert turn.recommendation is None and w.agent.desires.get("des_select_sofa").status.value == "active"
         assert "product candidates" in turn.needs
 
-    def test_missing_room_information_is_asked_for_not_invented(self):
+    def test_missing_room_information_is_optional_and_not_invented(self):
         w = World(known_room=False)
         turn = w.session.request(MESSAGE)
-        assert turn.recommendation is None
-        assert {"user.max_width_cm", "user.max_depth_cm"} <= set(turn.needs)
+        assert not {"user.max_width_cm", "user.max_depth_cm"} & set(turn.needs)  # not required any more
+        assert w.agent.beliefs.value("user", "max_width_cm") is None            # and never invented
+        assert w.agent.beliefs.value("user", "max_depth_cm") is None
+        assert turn.recommendation is not None                                   # planned without room limits
 
     def test_knowledge_store_failure_does_not_stop_the_session(self):
         from smartnest.database import BaseRepository

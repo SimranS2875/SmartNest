@@ -96,7 +96,12 @@ def explanation_prompt(facts: dict[str, Any]) -> str:
     return (
         "Explain in 2-4 plain sentences why this product is the recommendation. Mention the product by name, its "
         "price and its overall score, and what makes it better than the runner-up if one is given. "
-        "Use only the numbers in FACTS.\n"
+        "Use only the numbers in FACTS. Never say or imply that the product fits the room unless fit_status is "
+        "'Fit verified'. If fit_status is 'Fit not verified', say so; if it is 'No room limits specified', say only "
+        "that no room limits were given (do not say the fit is unverified). Do not praise or mention any attribute "
+        "listed in unavailable_attributes (it was not stated, so it did not influence the score), and say that the "
+        "score rests on completeness_percent of the criteria when that is below 100. If url_type is "
+        "'google_shopping', do not call the link a retailer link.\n"
         f"FACTS:\n{json.dumps(facts, ensure_ascii=False, default=str)}"
     )
 

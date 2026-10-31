@@ -224,6 +224,18 @@ class GeminiService:
             sentences.append(f"The runner-up was {facts.runner_up_name} at {facts.runner_up_utility:.2f}.")
         if facts.retailer:
             sentences.append(f"It is listed by {facts.retailer}.")
+        if facts.completeness_percent is not None and facts.completeness_percent < 100:
+            missing = f" Not available, so not scored: {', '.join(facts.unavailable_attributes)}." \
+                if facts.unavailable_attributes else ""
+            sentences.append(f"The score rests on {facts.completeness_percent:g}% of the applicable criteria.{missing}")
+        if facts.url_type == "google_shopping":
+            sentences.append("The link is a Google Shopping page, not a direct retailer listing.")
+        if facts.fit_status == "Fit verified":
+            sentences.append("Its stated size was checked against your room limits and fits.")
+        elif facts.fit_status == "Fit not verified":
+            sentences.append("Its size is not stated, so whether it fits your room is not verified.")
+        elif facts.fit_status == "No room limits specified":
+            sentences.append("No room limits were given, so fit was not assessed.")
         return RecommendationExplanation(text=" ".join(sentences), source="template",
                                          highlights=[f"score {facts.utility:.2f}/100", f"₹{facts.price:,.0f}"])
 

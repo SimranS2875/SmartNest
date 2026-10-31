@@ -55,10 +55,10 @@ CATALOGUE_SOURCE = "catalogue"
 
 BUDGET_PREDICATES = ("sofa_budget", "total_budget")
 REQUIREMENT_PREDICATES = (
-    "sofa_budget", "total_budget", "max_width_cm", "max_depth_cm",
+    "sofa_budget", "total_budget", "max_width_cm", "max_depth_cm", "max_height_cm",
     "min_seating", "preferred_style", "preferred_colour",
 )
-_POSITIVE_NUMBERS = ("sofa_budget", "total_budget", "max_width_cm", "max_depth_cm")
+_POSITIVE_NUMBERS = ("sofa_budget", "total_budget", "max_width_cm", "max_depth_cm", "max_height_cm")
 _TEXT = ("preferred_style", "preferred_colour")
 
 
@@ -177,9 +177,14 @@ class SelectProductHandler:
         budget = effective_budget(beliefs.value(USER, "sofa_budget"), beliefs.value(USER, "total_budget"))
         if budget is None:
             missing.append("user.sofa_budget or user.total_budget")
-        for predicate in ("max_width_cm", "max_depth_cm", "min_seating"):
-            if beliefs.value(USER, predicate) is None:
+        # Room limits (max_width_cm / max_depth_cm / max_height_cm) are optional: only limits the user
+        # gave are enforced.  But a limit that WAS given and has since been invalidated (e.g. the room
+        # is being remeasured) is unknown, not absent: the agent waits instead of silently dropping it.
+        for predicate in ("max_width_cm", "max_depth_cm", "max_height_cm"):
+            if beliefs.value(USER, predicate) is None and beliefs.get(USER, predicate, include_invalid=True) is not None:
                 missing.append(f"user.{predicate}")
+        if beliefs.value(USER, "min_seating") is None:
+            missing.append("user.min_seating")
         if missing:
             return None, missing
         try:
@@ -187,6 +192,7 @@ class SelectProductHandler:
                 budget=budget,
                 max_width_cm=beliefs.value(USER, "max_width_cm"),
                 max_depth_cm=beliefs.value(USER, "max_depth_cm"),
+                max_height_cm=beliefs.value(USER, "max_height_cm"),
                 min_seating=beliefs.value(USER, "min_seating"),
                 preferred_style=beliefs.value(USER, "preferred_style"),
                 preferred_colour=beliefs.value(USER, "preferred_colour"),
@@ -252,13 +258,17 @@ class SelectProductHandler:
     def _why_blocked(result: OptimizationResult) -> str:
         reasons = [f"{e.product_id}: {'; '.join(e.reasons)}" for e in result.evaluations[:6]]
         more = f" (+{len(result.evaluations) - 6} more)" if len(result.evaluations) > 6 else ""
-        return (f"none of the {result.total_inspected} candidates is feasible"
+        text = (f"none of the {result.total_inspected} candidates is feasible"
                 + (": " + " | ".join(reasons) + more if reasons else ""))
+        if result.unverified_count:
+            text += (f". {result.unverified_count} candidate(s) satisfy every constraint that could be checked "
+                     f"but their fit against the room limits is not verified (size not stated)")
+        return text
 
     def _record_attributes(self, beliefs: BeliefBase, record: dict[str, Any]) -> None:
         """Remember the chosen product's attributes so preconditions can refer to beliefs."""
         pid = record["product_id"]
-        for predicate in ("availability", "price", "width_cm", "depth_cm", "seating_capacity"):
+        for predicate in ("availability", "price", "width_cm", "depth_cm", "height_cm", "seating_capacity"):
             if record.get(predicate) is not None:
                 beliefs.ensure(pid, predicate, record[predicate], CATALOGUE_SOURCE)
 
@@ -274,14 +284,17 @@ class SelectProductHandler:
                       ref_predicate=name, description=f"price within {name}")
             for name in BUDGET_PREDICATES if beliefs.has(USER, name)
         ]
+        # Room limits are optional: a fit condition exists only for a limit the user gave (an invalidated
+        # limit still counts as given, so the intention is suspended until it is known again).
         fit_conditions = [
-            Condition(subject=pid, predicate="width_cm", operator="lte", ref_subject=USER,
-                      ref_predicate="max_width_cm", description="fits the room width"),
-            Condition(subject=pid, predicate="depth_cm", operator="lte", ref_subject=USER,
-                      ref_predicate="max_depth_cm", description="fits the room depth"),
-            Condition(subject=pid, predicate="seating_capacity", operator="gte", ref_subject=USER,
-                      ref_predicate="min_seating", description="enough seats"),
+            Condition(subject=pid, predicate=f"{axis}_cm", operator="lte", ref_subject=USER,
+                      ref_predicate=f"max_{axis}_cm", description=f"fits the room {axis}")
+            for axis in ("width", "depth", "height")
+            if beliefs.get(USER, f"max_{axis}_cm", include_invalid=True) is not None
         ]
+        fit_conditions.append(
+            Condition(subject=pid, predicate="seating_capacity", operator="gte", ref_subject=USER,
+                      ref_predicate="min_seating", description="enough seats"))
         hard_constraints = [availability, *budget_conditions, *fit_conditions]
 
         def copy(items: Sequence[Condition]) -> list[Condition]:

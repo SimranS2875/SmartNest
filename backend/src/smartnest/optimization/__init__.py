@@ -13,11 +13,15 @@ it unchanged.
 """
 
 from smartnest.optimization.constraint_validator import (
+    AVAILABILITY_LABELS,
     ConstraintValidator,
     EligibilityResult,
     InvalidRequirementsError,
+    FIT_LABELS,
     ProductCandidate,
+    SpatialAssessment,
     UserRequirements,
+    assess_space,
     validate_record,
 )
 from smartnest.optimization.scoring_config import (
@@ -35,8 +39,10 @@ from smartnest.optimization.utility_optimizer import (
 )
 
 __all__ = [
+    "AVAILABILITY_LABELS",
     "COMPONENTS",
     "DEFAULT_WEIGHTS",
+    "FIT_LABELS",
     "CandidateEvaluation",
     "ConstraintValidator",
     "EligibilityResult",
@@ -45,10 +51,12 @@ __all__ = [
     "ProductCandidate",
     "ScoringConfig",
     "ScoringConfigError",
+    "SpatialAssessment",
     "UserRequirements",
     "UtilityBreakdown",
     "UtilityModel",
     "UtilityOptimizer",
+    "assess_space",
     "ranking_key",
     "validate_record",
 ]

@@ -95,7 +95,8 @@ class TestRequirements:
         requirements, missing = handler().requirements(BeliefBase())
         assert requirements is None
         assert "user.sofa_budget or user.total_budget" in missing
-        assert {"user.max_width_cm", "user.max_depth_cm", "user.min_seating"} <= set(missing)
+        assert "user.min_seating" in missing
+        assert not {"user.max_width_cm", "user.max_depth_cm"} & set(missing)  # room limits are optional
 
     def test_invalidated_belief_counts_as_missing(self):
         beliefs = beliefs_with()
@@ -182,7 +183,7 @@ class TestPlanning:
     def test_waiting_when_information_is_missing(self):
         outcome = make_planner().plan(DESIRE, BeliefBase(), [])
         assert outcome.status == "waiting" and outcome.intention is None
-        assert "user.max_width_cm" in outcome.missing
+        assert "user.min_seating" in outcome.missing and "user.max_width_cm" not in outcome.missing
 
     @pytest.mark.parametrize("overrides", [
         {"sofa_budget": 28000}, {"max_width_cm": 200}, {"max_width_cm": 195}, {"max_depth_cm": 100},

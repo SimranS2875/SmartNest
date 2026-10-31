@@ -368,7 +368,7 @@ class TestDynamicReplanning:
         agent = make_agent(requirements={"total_budget": 200000, "sofa_budget": 30000})
         assert chosen(agent) is None
         waiting = [t for t in agent.transitions if t.kind == "desire_waiting"]
-        assert waiting and "user.max_width_cm" in waiting[0].explanation
+        assert waiting and "user.min_seating" in waiting[0].explanation  # room limits are optional
         agent.set_requirements({"max_width_cm": 210, "max_depth_cm": 110, "min_seating": 3,
                                 "preferred_style": "minimalist", "preferred_colour": "neutral"})
         assert chosen(agent) == "SOFA_A2"
