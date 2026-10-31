@@ -265,7 +265,9 @@ class ProductSpecAttrs(_Attrs):
     rating: float | None = None
     review_count: int | None = Field(default=None, strict=True)
     retailer: str | None = None
-    url: str | None = None
+    url: str | None = None                 # a direct retailer URL only
+    url_type: Literal["retailer", "google_shopping", "missing", "invalid"] | None = None
+    product_page_url: str | None = None    # the Google Shopping page, when that is all there is (never a retailer link)
     image_url: str | None = None
     verified_at: datetime | None = None
 

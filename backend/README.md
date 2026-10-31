@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-1766 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 109 net for optional attributes), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+1767 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -889,3 +889,42 @@ The recommendation rests on price alone: rating, review count and style were not
 - **Gemini facts/prompt/template** and **session**: availability, URL type and completeness are part of the facts; the prompt forbids praising unavailable attributes or calling a Google link a retailer link.
 - **CNP**: two call sites pass `require_complete=True`; negotiation output is byte-identical to before.
 - **Changed behaviour** (existing tests updated): a record missing rating / review count / style / colour / material / seating / availability is no longer `invalid`; `out_of_stock` is still rejected but with the reason `confirmed out of stock (availability: ...)`; `unknown` or unrecognised availability used to be rejected as "availability not confirmed" and is now `unverified`; with no stated style or colour preference those components are no longer scored as a constant 1.0 (rankings among products with the same data are unchanged, absolute U values shift upward-normalised).
+
+## Assignment 4.2 — Live Workflow Verification (Gemini → SerpApi → Optimizer → BDI → MongoDB)
+
+```bash
+python src/live_run.py --atlas                      # 0 SerpApi requests: uses the 6-hour search cache only
+python src/live_run.py --atlas --allow-requests 4   # permit a fresh search (1 search + 3 detail lookups)
+```
+
+`live_run.py` is the live counterpart of `adaptive_run.py`, built for *real* listings. Every language task is a real Gemini call; every product is real SerpApi Google Shopping data. A per-run request allowance (default **0**) sits on top of the lifetime ledger: if the cache is cold the run stops and says so instead of spending quota.
+
+| Step | What happens | Verified |
+|---|---|---|
+| 1. Request, no room limits | Gemini extracts ₹30,000 / 3 seats / minimalist; 10 real listings; recommendation from what the data states, with completeness and the unavailable attributes | direct Amazon.in retailer URL, in stock, ₹15,009; matches an independent optimizer re-run |
+| 2. New information (a **simulated** event on a real listing, labelled) | the recommended listing goes out of stock; belief updated, intention invalidated, replanned | next confirmed product (Home Centre, ₹22,999) chosen = optimizer's best remaining |
+| 3. User adds "210 cm wide, 110 cm deep" | Gemini extracts the limits; no real listing states its size | confirmed recommendation **withdrawn**; candidates shown as "Fit not verified". Constraints are not weakened |
+| 4. Persistence | knowledge records (SerpApi provenance), agent state saved to Atlas, agent restarted and restored | beliefs, history and the room limit survive the restart |
+
+27 checks passed, 0 new SerpApi requests (data retrieved 31 Oct 2026 17:45 UTC; prices and stock must be refreshed before buying). The first live run found and fixed a real bug that the simulated demo could not reveal: the product-knowledge schema rejected the URL-type fields, so real listings were not being saved (now covered by a regression test).
+
+### What Google Shopping actually states (measured on the real response: 40 results, 3 product-detail lookups)
+
+| Attribute | Stated | Notes |
+|---|---|---|
+| name, price, merchant, image, Google product page | 40/40 | |
+| "N seater" in the title | 27/40 | used (explicit text); otherwise seating is unverified |
+| rating / review count | 6/40 (15%) | |
+| direct retailer URL, stock text | only for products that got a detail lookup (3/3 did: "In stock online") | capped by `SERPAPI_MAX_DETAIL_CALLS` |
+| material | sometimes, as a detail "feature" | stored, not scored |
+| dimensions, style, colour | never as structured fields | |
+
+Evidence for the open design questions:
+- **Store ratings in the details are seller ratings, not product ratings**: one merchant shows an identical 4.1 (1,520 reviews) on two different sofas. They are deliberately not used as product quality.
+- **Style and colour words do appear in some titles** (16/40 and 15/40), but the search itself contained "minimalist", so a title match is circular evidence. They are not used. Using them would need to be an explicit, labelled "inferred" tier, which is a policy decision.
+
+### Open decisions for the project owner
+
+1. Whether to add a labelled *inferred* tier (title-derived style/colour) or a second evidence source for ratings; today unstated attributes are simply not scored.
+2. The price-only ranking policy: with 15% rating coverage, a recommendation will usually rest on price (completeness is always shown). Options: a minimum completeness for "recommended", or showing price-only results in a separate "limited evidence" tier.
+3. How strict CNP product records stay in the final application (currently complete records are required there).
