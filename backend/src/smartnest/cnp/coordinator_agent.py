@@ -194,6 +194,15 @@ class CoordinatorAgent:
     def result(self) -> NegotiationResult | None:
         return self._result
 
+    @property
+    def evaluator(self) -> ProposalEvaluator:
+        """The coordinator's own evaluator (``mode`` is "legacy" or "utility")."""
+        return self._evaluator
+
+    @property
+    def requirements(self) -> dict[str, Any]:
+        return dict(self._requirements)
+
     def _active_bidders(self) -> list[str]:
         return [
             a for a in self._bidders
@@ -214,8 +223,14 @@ class CoordinatorAgent:
         room_width: float,
         preferred_style: str = "",
         seating_capacity: int = 1,
+        room_depth: float | None = None,
+        preferred_colour: str | None = None,
     ) -> None:
-        """Set the furniture requirements for this negotiation."""
+        """Set the furniture requirements for this negotiation.
+
+        ``room_depth`` and ``preferred_colour`` are optional (Assignment 3.2).
+        A utility-mode evaluator needs ``room_depth`` to score spatial fit.
+        """
         self._requirements = {
             "task_description": task_description,
             "max_budget": max_budget,
@@ -223,6 +238,10 @@ class CoordinatorAgent:
             "preferred_style": preferred_style.lower(),
             "seating_capacity": seating_capacity,
         }
+        if room_depth is not None:
+            self._requirements["room_depth"] = room_depth
+        if preferred_colour:
+            self._requirements["preferred_colour"] = preferred_colour.lower()
 
     # ── Negotiation lifecycle ────────────────────────────────────────────
 
@@ -511,17 +530,38 @@ class CoordinatorAgent:
         evaluations: list[ProposalEvaluation] = []
 
         for proposal in self._round_proposals[round_num]:
+            # The coordinator always recalculates utility itself, from the
+            # product attributes and the price actually offered.  Any score
+            # the bidder reported is only compared, never trusted.
             evaluation = self._evaluator.evaluate(proposal, self._requirements)
             evaluations.append(evaluation)
 
             if evaluation.feasible:
+                details: dict[str, Any] = {
+                    "utility": evaluation.utility_score,
+                    "scores": evaluation.scores,
+                }
+                if evaluation.utility_breakdown:
+                    details["breakdown"] = evaluation.utility_breakdown
                 self._log(
                     f"  {evaluation.agent_id} candidate {evaluation.product_id} "
                     f"(₹{evaluation.proposed_price:,}) — utility={evaluation.utility_score:.4f}",
                     "proposal_feasible",
                     evaluation.agent_id,
-                    {"utility": evaluation.utility_score, "scores": evaluation.scores},
+                    details,
                 )
+                gap = evaluation.utility_discrepancy
+                if gap is not None and abs(gap) > 1e-4:
+                    self._log(
+                        f"  {evaluation.agent_id} reported utility "
+                        f"{evaluation.reported_utility:.4f} but the coordinator calculated "
+                        f"{evaluation.utility_score:.4f} — using the coordinator's own score",
+                        "utility_discrepancy",
+                        evaluation.agent_id,
+                        {"reported": evaluation.reported_utility,
+                         "recalculated": evaluation.utility_score,
+                         "difference": gap},
+                    )
             else:
                 self._log(
                     f"  {evaluation.agent_id} candidate {evaluation.product_id} rejected — "

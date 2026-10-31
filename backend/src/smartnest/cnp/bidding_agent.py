@@ -24,6 +24,17 @@ connection in its own thread.
 
 The agent's decisions depend entirely on its own catalogue data, its own
 pricing strategy and the coordinator's messages — nothing is hardcoded.
+
+Utility-based selection (Assignment 3.2):
+    Give the agent a ``UtilityOptimizer`` and, whenever the CFP states
+    every constraint the utility model needs (budget, width, depth,
+    seating), the agent runs the optimizer over its own catalogue and
+    proposes its highest-utility feasible product.  The proposal then
+    carries ``self_reported_utility`` and ``utility_breakdown`` computed
+    at the *offered* price.  The coordinator never trusts these values —
+    it recalculates — so they are informative only.  When a constraint
+    is still unannounced (e.g. width in round 1 of progressive
+    disclosure), the agent falls back to its 3.1 heuristic.
 """
 
 from __future__ import annotations
@@ -37,6 +48,11 @@ from smartnest.cnp.product_catalog import ProductCatalog
 from smartnest.communication.message_router import MessageRouter
 from smartnest.communication.remote_agent_server import RemoteAgentServer
 from smartnest.core.models import MessageEnvelope, MessageType
+from smartnest.optimization import (
+    InvalidRequirementsError,
+    UserRequirements,
+    UtilityOptimizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +95,7 @@ class BiddingAgent:
         port: int = 0,
         max_discount_pct: float = 0.05,
         concession_step_pct: float = 0.025,
+        utility_optimizer: UtilityOptimizer | None = None,
     ) -> None:
         if not 0.0 <= max_discount_pct < 1.0:
             raise ValueError("max_discount_pct must be in [0, 1)")
@@ -90,6 +107,7 @@ class BiddingAgent:
         self._host = host
         self._max_discount = max_discount_pct
         self._concession_step = concession_step_pct
+        self._optimizer = utility_optimizer
 
         self._lock = threading.RLock()
         self._negotiations: dict[str, _NegotiationRecord] = {}
@@ -207,13 +225,19 @@ class BiddingAgent:
         )
 
         effective_req = self._effective_requirements(requirements, updated_constraints)
+        utility_req = self._utility_requirements(effective_req)
 
-        eligible = self._catalog.find_eligible_products(
-            max_budget=effective_req["max_budget"],
-            room_width=effective_req["room_width"],
-            preferred_style=effective_req["preferred_style"],
-            seating_capacity=effective_req["seating_capacity"],
-        )
+        if utility_req is not None:
+            # 3.2: pick our own highest-utility feasible product.
+            best_product = self._best_by_utility(utility_req)
+            eligible = [best_product] if best_product else []
+        else:
+            eligible = self._catalog.find_eligible_products(
+                max_budget=effective_req["max_budget"],
+                room_width=effective_req["room_width"],
+                preferred_style=effective_req["preferred_style"],
+                seating_capacity=effective_req["seating_capacity"],
+            )
 
         if not eligible:
             logger.info("%s has no eligible products in round %d", self.agent_id, round_num)
@@ -229,9 +253,10 @@ class BiddingAgent:
                 },
             )
 
-        # The agent's own selection heuristic — independent of the
-        # coordinator's utility, which evaluates the proposal separately.
-        best_product = self._select_best_product(eligible, effective_req)
+        if utility_req is None:
+            # The agent's own 3.1 selection heuristic — independent of the
+            # coordinator's utility, which evaluates the proposal separately.
+            best_product = self._select_best_product(eligible, effective_req)
 
         with self._lock:
             discount = self._next_discount(record, best_product["product_id"], offer_feedback)
@@ -239,6 +264,8 @@ class BiddingAgent:
             proposal = self._build_proposal(
                 best_product, round_num, negotiation_id, discount, effective_req
             )
+            if utility_req is not None:
+                self._attach_self_assessment(proposal, best_product, utility_req)
             record.offers.append(dict(proposal))
 
         logger.info(
@@ -367,6 +394,8 @@ class BiddingAgent:
             room_width = updated_constraints["max_width"]
         max_budget = updated_constraints.get("max_budget", requirements.get("max_budget", 0))
         return {
+            "room_depth": updated_constraints.get("max_depth", requirements.get("room_depth")),
+            "preferred_colour": requirements.get("preferred_colour"),
             "max_budget": max_budget or 0,
             "room_width": room_width,  # None → width not announced yet
             "preferred_style": updated_constraints.get(
@@ -376,6 +405,55 @@ class BiddingAgent:
                 "seating_capacity", requirements.get("seating_capacity")
             ),
         }
+
+    @property
+    def utility_optimizer(self) -> UtilityOptimizer | None:
+        return self._optimizer
+
+    def _catalog_records(self) -> list[dict[str, Any]]:
+        """Catalogue entries attributed to this agent (we are the source)."""
+        return [{**p, "source_agent_id": self.agent_id} for p in self._catalog.get_all_products()]
+
+    def _utility_requirements(self, effective_req: dict[str, Any]) -> UserRequirements | None:
+        """3.2 requirements, or ``None`` if no optimizer / constraints incomplete."""
+        if self._optimizer is None:
+            return None
+        try:
+            return UserRequirements.from_cnp(effective_req)
+        except InvalidRequirementsError:
+            return None  # e.g. width not announced yet → 3.1 heuristic
+
+    def _best_by_utility(self, req: UserRequirements) -> dict[str, Any] | None:
+        """Our highest-utility feasible catalogue product (``None`` if none)."""
+        result = self._optimizer.optimize(self._catalog_records(), req)
+        if result.selected is None:
+            return None
+        return self._catalog.get_product(result.selected.product_id)
+
+    def evaluate_own_catalog(self, requirements: UserRequirements | dict[str, Any]):
+        """Run the optimizer over this agent's own catalogue (no networking).
+
+        Returns the full :class:`OptimizationResult`, so the agent can see
+        its highest-utility feasible options and why others were rejected.
+        """
+        if self._optimizer is None:
+            raise RuntimeError(f"{self.agent_id} has no utility optimizer")
+        if not isinstance(requirements, UserRequirements):
+            requirements = UserRequirements.from_cnp(requirements)
+        return self._optimizer.optimize(self._catalog_records(), requirements)
+
+    def _attach_self_assessment(
+        self,
+        proposal: dict[str, Any],
+        product: dict[str, Any],
+        req: UserRequirements,
+    ) -> None:
+        """Add our own utility estimate at the offered price (informative only)."""
+        offered = {**product, "price": proposal["proposed_price"], "source_agent_id": self.agent_id}
+        evaluation = self._optimizer.evaluate_candidate(offered, req)
+        if evaluation.breakdown is not None:
+            proposal["self_reported_utility"] = evaluation.breakdown.normalised_utility
+            proposal["utility_breakdown"] = evaluation.breakdown.model_dump()
 
     def _next_discount(
         self,

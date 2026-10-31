@@ -183,7 +183,7 @@ class TestBudgetLatency:
         _time.sleep(0.12)
         worker.poll()
         assert stream.size == 1
-        assert worker.metrics.last_detection_latency >= 0.11
+        assert worker.metrics.last_detection_latency >= 0.09  # 120 ms sleep; allow for the ~15 ms Windows clock tick
 
     def test_unchanged_poll_records_no_latency(self):
         from smartnest.core.events import EventStream
