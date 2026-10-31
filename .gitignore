@@ -27,3 +27,7 @@ Thumbs.db
 
 # SerpApi local usage counter
 backend/.serpapi_usage.json
+
+# Agent private keys (Assignment 5.1): never commit
+backend/keys/
+*.pem

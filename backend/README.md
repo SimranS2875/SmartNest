@@ -1,4 +1,4 @@
-# SmartNest — Assignments 1.2, 2.1, 2.2, 3.1, 3.2, 4.1 & 4.2 (+ SerpApi product discovery, optional dimensions and attributes)
+# SmartNest — Assignments 1.2, 2.1, 2.2, 3.1, 3.2, 4.1, 4.2 & 5.1 (+ SerpApi product discovery, optional dimensions and attributes)
 
 SmartNest is an autonomous Home Planning and Product Selection Assistant. This repository contains the backend foundation, a rule-based environmental reasoner (Assignment 1.2), concurrent background worker infrastructure (Assignment 2.1), distributed agent messaging over TCP sockets (Assignment 2.2), multi-agent coordination using Contract Net Protocol (Assignment 3.1), explicit mathematical utility optimization for product selection (Assignment 3.2), a MongoDB Atlas persistence layer, a BDI agent architecture (Assignment 4.1), and knowledge representation with adaptive Gemini and live-product integration (Assignment 4.2).
 
@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-1767 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+1906 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -928,3 +928,48 @@ Evidence for the open design questions:
 1. Whether to add a labelled *inferred* tier (title-derived style/colour) or a second evidence source for ratings; today unstated attributes are simply not scored.
 2. The price-only ranking policy: with 15% rating coverage, a recommendation will usually rest on price (completeness is always shown). Options: a minimum completeness for "recommended", or showing price-only results in a separate "limited evidence" tier.
 3. How strict CNP product records stay in the final application (currently complete records are required there).
+
+## Assignment 5.1: Agent Authentication and Security (Ed25519)
+
+Inter-agent messages are now authenticated with Ed25519 digital signatures. **Signatures give authenticity and integrity, not secrecy**: anyone on the wire can still read a message; encrypting traffic (for example TLS) is a separate concern.
+
+```bash
+python src/security_run.py      # nine scenarios over real TCP, with the audit trail and a leak scan of its own output
+```
+
+### Package (`smartnest/security/`)
+
+| Module | Purpose |
+|---|---|
+| `keys.py` | `AgentKeyPair`: Ed25519 generation from the OS secure random source; `save()` writes PKCS#8 PEM (optionally passphrase-encrypted, mode 0600 where supported, never overwrites silently); `load()`; public key and 16-hex fingerprint are safe to share and log; the private key never appears in `repr`/`str`/logs and cannot be pickled |
+| `signing.py` | `sign_envelope` / `verify_envelope`. Signs a domain prefix plus canonical JSON of **every** field except the signature (`message_id, sender, receiver, message_type, task_id, payload, timestamp, schema_version`); refuses to sign as another agent; the sender's key comes only from the registry, never from the message |
+| `registry.py` | `TrustedAgentRegistry`: agent id → public key + roles (public data only; JSON round-trip); one key per id, no aliasing, explicit rotation, revocation |
+| `policy.py` | `AuthorizationPolicy`: roles (`coordinator`, `worker`, `observer`) → permitted message types, with optional `task_type` restrictions. Authenticated is not authorized: a trusted worker cannot issue commands (`task_request`, `state_sync`, `cfp`, `award`, `accept_proposal`, `cancel`, `request`) |
+| `replay.py` | `ReplayGuard`: freshness window (default 120 s, 30 s skew) plus one-time message ids; bounded memory; consulted only after the signature verifies, so forged traffic cannot fill it |
+| `audit.py` | `AuditLog`: every accepted/rejected message with code and reason (never the payload or key material), also written to the `smartnest.security.audit` logger |
+| `secure_router.py` | `SecureMessageRouter` wraps a `MessageRouter` and has the same `route()` method, so the existing `RemoteAgentServer` and transport are used **unchanged**. Checks, in order: addressed to me → signed → trusted and not revoked → signature valid → fresh and unseen → role allows this type → only then the handler runs. Replies are signed with the server's own key; a rejected peer is told only a coarse reason (`authentication_failed`, `message_rejected`, `not_authorized`) |
+| `channel.py` | `SecureChannel`: signs requests and verifies replies (valid signature, expected server, addressed to me, fresh) |
+
+### Demonstration (`security_run.py`, actual output summary)
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | trusted coordinator sends `state_sync` and `task_request` | accepted; handlers ran; Agent B's signed replies verified |
+| 2 | the same command modified in transit (sofa width 230 → 150 cm) | rejected `bad_signature` |
+| 3 | unsigned command | rejected `unsigned` |
+| 4 | attacker claims to be the coordinator, signs with her own key | rejected `bad_signature` |
+| 5 | unknown agent, validly signed | rejected `unknown_sender` |
+| 6 | trusted **worker** issues a command | rejected `not_authorized` (its `INFORM` report is accepted) |
+| 7 | captured valid command re-sent | rejected `replay` |
+| 8 | command addressed to another agent forwarded to Agent B | rejected `wrong_receiver` |
+| 9 | worker key reported stolen and revoked | rejected `revoked_sender` |
+
+Handlers ran only for messages from trusted senders; nothing from the attacker reached one; the run scans its own output and logs for every private key (hex, base64, PEM) and finds none.
+
+### Key handling and honest limits
+
+- Keep private keys in the git-ignored `backend/keys/` (`*.pem` is ignored everywhere); never commit them. Use a passphrase (for example from an environment variable) for stored keys.
+- On Windows `chmod` cannot restrict a file to one user, so an encrypted key is the real protection there.
+- The registry is trust-on-configuration: SmartNest authenticates agents whose public keys an operator has registered; it does not solve first-contact key distribution.
+- Not applied to the CNP negotiation traffic or the 2.2 demos yet (they are untouched, byte-identical output): the secure router can wrap any of their routers when that is wanted.
+- Replay protection assumes clocks agree within the skew; the seen-id window is per process (restarting the receiver forgets it, but the freshness window still bounds replay).
