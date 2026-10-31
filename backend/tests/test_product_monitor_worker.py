@@ -253,8 +253,8 @@ class TestRemovalAndLatency:
         catalog.update_price("Sofa", 20000)
         time.sleep(0.15)  # change sits undetected for ~150 ms
         worker.poll()
-        assert worker.metrics.last_detection_latency >= 0.14
-        assert worker.metrics.max_detection_latency >= 0.14
+        assert worker.metrics.last_detection_latency >= 0.12  # 150 ms sleep; allow for the ~15 ms Windows clock tick
+        assert worker.metrics.max_detection_latency >= 0.12
 
     def test_full_bounded_stream_counts_lost_event(self):
         catalog = SimulatedCatalogProvider(INITIAL_PRODUCTS)

@@ -26,13 +26,39 @@ Soft scoring (each normalised to [0, 1], then weighted):
 
 Weights are validated (known keys, non-negative, positive sum) and
 normalised to sum to 1, so utility stays in [0, 1].
+
+Two scoring modes (Assignment 3.2):
+    - **legacy** (default) — the Assignment 3.1 weighted score described
+      above.  Kept unchanged so existing CNP callers behave exactly as
+      before.
+    - **utility** — ``ProposalEvaluator(utility_model=UtilityModel(...))``
+      or ``ProposalEvaluator.utility_based()``.  ``evaluate`` delegates
+      to :mod:`smartnest.optimization`: the proposal is validated, checked
+      against the hard constraints (budget, width, depth, seating,
+      availability) and scored with
+      U = 100 × (0.30P + 0.25Q + 0.20F + 0.15S + 0.10C).
+      ``utility_score`` is U / 100 so both modes share the [0, 1] scale;
+      the full breakdown (0–100 points) is in ``utility_breakdown``.
+
+In both modes the evaluator scores the *offered* price
+(``proposed_price``), so a negotiated discount is always re-scored, and
+any utility a bidder reports about itself is ignored for ranking (it is
+only recorded in ``reported_utility`` for auditing).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
+
+from smartnest.optimization import (
+    ScoringConfig,
+    UserRequirements,
+    UtilityModel,
+    UtilityOptimizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +89,11 @@ class ProposalEvaluation:
         rejection_reason: Why the proposal was rejected (if infeasible).
         proposed_price: The price that was evaluated (the bid price).
         round: Negotiation round the proposal came from (0 if unknown).
+        quality_score: Q component (utility mode; 0.0 in legacy mode),
+            used as the first tie-breaker after utility.
+        utility_breakdown: Full utility-model breakdown (utility mode).
+        reported_utility: Utility the bidder claimed for itself, if any.
+            Recorded for auditing only — never used for ranking.
     """
 
     agent_id: str
@@ -73,6 +104,16 @@ class ProposalEvaluation:
     rejection_reason: str = ""
     proposed_price: float = 0.0
     round: int = 0
+    quality_score: float = 0.0
+    utility_breakdown: dict[str, Any] = field(default_factory=dict)
+    reported_utility: float | None = None
+
+    @property
+    def utility_discrepancy(self) -> float | None:
+        """reported − recalculated utility (``None`` if nothing comparable)."""
+        if self.reported_utility is None or not self.feasible:
+            return None
+        return round(self.reported_utility - self.utility_score, 6)
 
 
 class ProposalEvaluator:
@@ -97,10 +138,34 @@ class ProposalEvaluator:
         "availability": 0.15,
     }
 
-    def __init__(self, weights: dict[str, float] | None = None) -> None:
+    def __init__(
+        self,
+        weights: dict[str, float] | None = None,
+        utility_model: UtilityModel | None = None,
+    ) -> None:
+        if weights is not None and utility_model is not None:
+            raise ValueError(
+                "Pass either legacy weights or a utility_model, not both "
+                "(utility weights live in the model ScoringConfig)"
+            )
         self._weights = self._normalise_weights(
             dict(self.DEFAULT_WEIGHTS) if weights is None else dict(weights)
         )
+        self._optimizer = UtilityOptimizer(utility_model) if utility_model is not None else None
+
+    @classmethod
+    def utility_based(cls, config: ScoringConfig | None = None) -> "ProposalEvaluator":
+        """An evaluator that delegates to the Assignment 3.2 utility model."""
+        return cls(utility_model=UtilityModel(config))
+
+    @property
+    def mode(self) -> str:
+        """``"utility"`` when delegating to the utility model, else ``"legacy"``."""
+        return "utility" if self._optimizer is not None else "legacy"
+
+    @property
+    def optimizer(self) -> UtilityOptimizer | None:
+        return self._optimizer
 
     @classmethod
     def _normalise_weights(cls, weights: dict[str, float]) -> dict[str, float]:
@@ -133,7 +198,14 @@ class ProposalEvaluator:
 
         Returns:
             A ``ProposalEvaluation`` with feasibility and utility score.
+
+        Raises:
+            InvalidRequirementsError: In utility mode, if ``requirements``
+                lack a valid budget, width, depth or seating value.
         """
+        if self._optimizer is not None:
+            return self._evaluate_with_utility_model(proposal, requirements)
+
         agent_id = proposal.get("agent_id", "unknown")
         product_id = proposal.get("product_id", "unknown")
         product = proposal.get("product", {}) or {}
@@ -206,6 +278,53 @@ class ProposalEvaluator:
             round=round_num,
         )
 
+    def _evaluate_with_utility_model(
+        self,
+        proposal: dict[str, Any],
+        requirements: dict[str, Any],
+    ) -> ProposalEvaluation:
+        """Utility mode: validate, constraint-check and score via the optimizer."""
+        agent_id = proposal.get("agent_id", "unknown")
+        product = dict(proposal.get("product") or {})
+        product_id = proposal.get("product_id") or product.get("product_id") or "unknown"
+        offered = proposal.get("proposed_price", product.get("price"))
+        round_num = int(proposal.get("negotiation_round", 0) or 0)
+        reported = _finite_or_none(proposal.get("self_reported_utility"))
+
+        # Score what is actually on offer: the negotiated price, attributed
+        # to the bidder the coordinator is talking to.
+        record = {**product, "product_id": product_id, "price": offered,
+                  "source_agent_id": agent_id}
+        req = UserRequirements.from_cnp(requirements)
+        evaluation = self._optimizer.evaluate_candidate(record, req)
+        price = _finite_or_none(offered) or 0.0
+
+        if not evaluation.eligible:
+            return ProposalEvaluation(
+                agent_id=agent_id,
+                product_id=product_id,
+                feasible=False,
+                utility_score=0.0,
+                rejection_reason="; ".join(evaluation.reasons),
+                proposed_price=price,
+                round=round_num,
+                reported_utility=reported,
+            )
+
+        breakdown = evaluation.breakdown
+        return ProposalEvaluation(
+            agent_id=agent_id,
+            product_id=product_id,
+            feasible=True,
+            utility_score=breakdown.normalised_utility,
+            scores=dict(breakdown.components),
+            proposed_price=price,
+            round=round_num,
+            quality_score=breakdown.components["quality"],
+            utility_breakdown=breakdown.model_dump(),
+            reported_utility=reported,
+        )
+
     @staticmethod
     def _style_score(style: str, preferred_style: str) -> float:
         if not preferred_style:
@@ -224,9 +343,25 @@ class ProposalEvaluator:
     ) -> list[ProposalEvaluation]:
         """Rank feasible evaluations by utility score (descending).
 
-        Ties are broken by lower proposed price, then earlier round.
+        Deterministic tie-breaking (same order as the 3.2 optimizer):
+        higher quality score, lower proposed price, product ID A→Z, then
+        earlier round.  In legacy mode the quality score is 0 for every
+        proposal, so ties fall through to price.
         Infeasible proposals are excluded from the ranking.
         """
         feasible = [e for e in evaluations if e.feasible]
-        feasible.sort(key=lambda e: (-e.utility_score, e.proposed_price, e.round))
+        feasible.sort(key=lambda e: (
+            -round(e.utility_score, 6),
+            -round(e.quality_score, 6),
+            e.proposed_price,
+            e.product_id,
+            e.round,
+        ))
         return feasible
+
+
+def _finite_or_none(value: Any) -> float | None:
+    """``float(value)`` if it is a finite real number (not bool), else ``None``."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None

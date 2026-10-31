@@ -5,8 +5,8 @@ are clearly labelled as simulated — they contain no real retailer URLs.
 
 The ``ProductCatalog`` class is separate from the Assignment 2.1
 ``CatalogProvider`` because CNP agents need richer product attributes
-(material, color, style, seating capacity) and don't need thread-safe
-price/availability updates.
+(material, color, style, seating capacity, depth, rating, reviews) and
+don't need thread-safe price/availability updates.
 
 Future compatibility:
     The ``ProductCatalog`` interface allows replacement with real
@@ -116,94 +116,115 @@ class ProductCatalog:
 
 
 # ── Default simulated catalogues ────────────────────────────────────────────
+#
+# ALL DATA BELOW IS SIMULATED for educational purposes.  These are not real
+# retailer listings, prices or reviews, and no purchase URLs are included.
+#
+# Each product carries every field the Assignment 3.2 utility model needs:
+# product_id, name, price, width_cm, depth_cm, seating_capacity, material,
+# color, style, availability, rating (0–5), review_count, source_agent_id.
+#
+# ``catalog_agent_a()`` / ``catalog_agent_b()`` return the three sofas each
+# that the Assignment 3.1 negotiation scenario is built on.  Passing
+# ``extended=True`` adds four more sofas per agent for the Assignment 3.2
+# optimisation scenario (14 candidates in total), chosen to exercise every
+# hard constraint and its boundaries:
+#
+#   SOFA_A4  depth 115 cm  > 110 cm limit           → rejected (depth)
+#   SOFA_A5  2 seats        < 3 required            → rejected (seating)
+#   SOFA_A6  ₹30,000 / 210 cm / 110 cm / 3 seats    → exactly at every limit
+#   SOFA_A7  traditional, burgundy                  → feasible, low S and C
+#   SOFA_B4  contemporary, taupe                    → feasible, partial S and C
+#   SOFA_B5  ₹30,001                                → rejected (₹1 over budget)
+#   SOFA_B6  out of stock                           → rejected (availability)
+#   SOFA_B7  211 cm                                 → rejected (1 cm too wide)
 
-def catalog_agent_a() -> ProductCatalog:
+_AGENT_A = "research_agent_a"
+_AGENT_B = "research_agent_b"
+
+
+def _sofa(agent: str, product_id: str, name: str, price: float, width: float, depth: float,
+          material: str, color: str, style: str, seats: int, availability: str,
+          rating: float, reviews: int) -> dict[str, Any]:
+    return {
+        "product_id": product_id,
+        "name": name,
+        "price": price,
+        "width_cm": width,
+        "depth_cm": depth,
+        "material": material,
+        "color": color,
+        "style": style,
+        "seating_capacity": seats,
+        "availability": availability,
+        "rating": rating,
+        "review_count": reviews,
+        "source_agent_id": agent,
+    }
+
+
+_A_CORE = [
+    _sofa(_AGENT_A, "SOFA_A1", "Minimalist Three-Seater Sofa A1", 24999, 230, 95,
+          "fabric", "grey", "minimalist", 3, "in_stock", 4.2, 210),
+    _sofa(_AGENT_A, "SOFA_A2", "Compact Minimalist Sofa A2", 27499, 195, 92,
+          "leather", "neutral", "minimalist", 3, "in_stock", 4.5, 88),
+    _sofa(_AGENT_A, "SOFA_A3", "Premium Minimalist Sofa A3", 29499, 205, 98,
+          "fabric", "beige", "minimalist", 3, "in_stock", 4.7, 140),
+]
+
+_A_EXTENDED = [
+    _sofa(_AGENT_A, "SOFA_A4", "Scandi Lounge Sofa A4", 25499, 200, 115,
+          "fabric", "neutral", "scandinavian", 3, "in_stock", 4.6, 310),
+    _sofa(_AGENT_A, "SOFA_A5", "Compact Loveseat A5", 18999, 160, 85,
+          "fabric", "neutral", "minimalist", 2, "in_stock", 4.4, 75),
+    _sofa(_AGENT_A, "SOFA_A6", "Exact-Fit Minimalist Sofa A6", 30000, 210, 110,
+          "fabric", "cream", "minimalist", 3, "in_stock", 4.1, 100),
+    _sofa(_AGENT_A, "SOFA_A7", "Classic Chesterfield Sofa A7", 26499, 205, 100,
+          "leather", "burgundy", "traditional", 3, "in_stock", 4.5, 60),
+]
+
+_B_CORE = [
+    _sofa(_AGENT_B, "SOFA_B1", "Scandi Three-Seater Sofa B1", 22999, 225, 90,
+          "fabric", "white", "minimalist", 3, "in_stock", 4.0, 65),
+    _sofa(_AGENT_B, "SOFA_B2", "Urban Minimalist Sofa B2", 28499, 200, 100,
+          "leather", "grey", "minimalist", 3, "in_stock", 4.3, 120),
+    _sofa(_AGENT_B, "SOFA_B3", "Slim Profile Sofa B3", 26999, 190, 88,
+          "fabric", "neutral", "minimalist", 3, "in_stock", 4.4, 45),
+]
+
+_B_EXTENDED = [
+    _sofa(_AGENT_B, "SOFA_B4", "Contemporary Track-Arm Sofa B4", 27999, 208, 105,
+          "fabric", "taupe", "contemporary", 3, "in_stock", 4.8, 95),
+    _sofa(_AGENT_B, "SOFA_B5", "Signature Minimalist Sofa B5", 30001, 200, 95,
+          "leather", "neutral", "minimalist", 3, "in_stock", 4.9, 400),
+    _sofa(_AGENT_B, "SOFA_B6", "Cloud Minimalist Sofa B6", 25999, 198, 96,
+          "fabric", "neutral", "minimalist", 3, "out_of_stock", 4.6, 150),
+    _sofa(_AGENT_B, "SOFA_B7", "Edge Minimalist Sofa B7", 24999, 211, 100,
+          "fabric", "grey", "minimalist", 3, "in_stock", 4.2, 30),
+]
+
+
+def catalog_agent_a(extended: bool = False) -> ProductCatalog:
     """Simulated catalogue for Product Research Agent A.
 
+    Args:
+        extended: Include the four extra Assignment 3.2 sofas.
+
     All entries are simulated data for educational purposes.
     No real retailer listings or URLs are included.
     """
-    return ProductCatalog(
-        agent_id="research_agent_a",
-        products=[
-            {
-                "product_id": "SOFA_A1",
-                "name": "Minimalist Three-Seater Sofa A1",
-                "price": 24999,
-                "width_cm": 230,
-                "material": "fabric",
-                "color": "grey",
-                "style": "minimalist",
-                "seating_capacity": 3,
-                "availability": "in_stock",
-            },
-            {
-                "product_id": "SOFA_A2",
-                "name": "Compact Minimalist Sofa A2",
-                "price": 27499,
-                "width_cm": 195,
-                "material": "leather",
-                "color": "neutral",
-                "style": "minimalist",
-                "seating_capacity": 3,
-                "availability": "in_stock",
-            },
-            {
-                "product_id": "SOFA_A3",
-                "name": "Premium Minimalist Sofa A3",
-                "price": 29499,
-                "width_cm": 205,
-                "material": "fabric",
-                "color": "beige",
-                "style": "minimalist",
-                "seating_capacity": 3,
-                "availability": "in_stock",
-            },
-        ],
-    )
+    products = _A_CORE + (_A_EXTENDED if extended else [])
+    return ProductCatalog(agent_id=_AGENT_A, products=[dict(p) for p in products])
 
 
-def catalog_agent_b() -> ProductCatalog:
+def catalog_agent_b(extended: bool = False) -> ProductCatalog:
     """Simulated catalogue for Product Research Agent B.
 
+    Args:
+        extended: Include the four extra Assignment 3.2 sofas.
+
     All entries are simulated data for educational purposes.
     No real retailer listings or URLs are included.
     """
-    return ProductCatalog(
-        agent_id="research_agent_b",
-        products=[
-            {
-                "product_id": "SOFA_B1",
-                "name": "Scandi Three-Seater Sofa B1",
-                "price": 22999,
-                "width_cm": 225,
-                "material": "fabric",
-                "color": "white",
-                "style": "minimalist",
-                "seating_capacity": 3,
-                "availability": "in_stock",
-            },
-            {
-                "product_id": "SOFA_B2",
-                "name": "Urban Minimalist Sofa B2",
-                "price": 28499,
-                "width_cm": 200,
-                "material": "leather",
-                "color": "grey",
-                "style": "minimalist",
-                "seating_capacity": 3,
-                "availability": "in_stock",
-            },
-            {
-                "product_id": "SOFA_B3",
-                "name": "Slim Profile Sofa B3",
-                "price": 26999,
-                "width_cm": 190,
-                "material": "fabric",
-                "color": "neutral",
-                "style": "minimalist",
-                "seating_capacity": 3,
-                "availability": "in_stock",
-            },
-        ],
-    )
+    products = _B_CORE + (_B_EXTENDED if extended else [])
+    return ProductCatalog(agent_id=_AGENT_B, products=[dict(p) for p in products])
