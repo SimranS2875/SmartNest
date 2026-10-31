@@ -103,18 +103,26 @@ class TestBoundaries:
     def test_seating_below_minimum_rejected(self):
         assert _status(seating_capacity=2).reasons == ["seating capacity 2 is below the minimum 3"]
 
-    @pytest.mark.parametrize("availability", ["out_of_stock", "discontinued", "backorder", "unknown"])
-    def test_unconfirmed_availability_rejected(self, availability):
+    @pytest.mark.parametrize("availability", ["out_of_stock", "discontinued"])
+    def test_confirmed_out_of_stock_is_rejected(self, availability):
         res = _status(availability=availability)
         assert res.status == "rejected"
-        assert "availability not confirmed" in res.reasons[0]
+        assert "confirmed out of stock" in res.reasons[0]
+
+    @pytest.mark.parametrize("availability", ["backorder", "unknown"])
+    def test_unconfirmed_availability_is_unverified_not_rejected_and_not_in_stock(self, availability):
+        # (previously rejected; unknown availability is now a separate, clearly-labelled category)
+        res = _status(availability=availability)
+        assert res.status == "unverified" and not res.eligible
+        assert res.availability == "unknown" and res.gaps == ["availability"]
+        assert "check stock on the retailer" in res.reasons[0]
 
     def test_low_stock_counts_as_confirmed(self):
         assert _status(availability="low_stock").eligible
 
     def test_available_states_are_configurable(self):
         strict = ConstraintValidator(ScoringConfig(available_states=["in_stock"]))
-        assert strict.evaluate(_record(availability="low_stock"), REQ).status == "rejected"
+        assert strict.evaluate(_record(availability="low_stock"), REQ).status == "unverified"  # no longer confirmed
 
     def test_every_violation_is_reported(self):
         res = _status(price=40000, width_cm=250, depth_cm=150, seating_capacity=1,
@@ -125,8 +133,10 @@ class TestBoundaries:
 # ── Malformed records ────────────────────────────────────────────────────────
 
 class TestInvalidRecords:
-    @pytest.mark.parametrize("field", ["width_cm", "depth_cm", "price", "rating",
-                                       "review_count", "seating_capacity"])
+    # width_cm / depth_cm are no longer required: a missing size is "unknown", not invalid
+    # (see tests/test_optional_dimensions.py).  Malformed sizes are still invalid, below.
+    # Rating, review count and seating are optional too now (see tests/test_optional_attributes.py).
+    @pytest.mark.parametrize("field", ["price"])
     def test_missing_numeric_field_is_invalid_not_defaulted(self, field):
         record = _record()
         del record[field]
@@ -155,7 +165,7 @@ class TestInvalidRecords:
         assert any(fragment in r for r in res.reasons)
 
     @pytest.mark.parametrize("field,value", [("style", ""), ("style", "   "), ("style", 7),
-                                             ("color", None), ("name", ""), ("availability", 1)])
+                                             ("name", ""), ("availability", 1)])  # a missing colour is now allowed
     def test_empty_or_invalid_text_fields(self, field, value):
         res = _status(**{field: value})
         assert res.status == "invalid"
@@ -176,9 +186,11 @@ class TestInvalidRecords:
         assert res.status == "invalid"
 
     def test_all_errors_listed(self):
-        candidate, errors = validate_record({"product_id": "X"})
+        candidate, errors = validate_record({"product_id": "X"}, require_complete=True)  # the strict CNP mode
         assert candidate is None
         assert len(errors) >= 10
+        lenient, few = validate_record({"product_id": "X"})   # only name, price and source are mandatory now
+        assert lenient is None and len(few) == 3
 
     def test_valid_record_is_normalised(self):
         candidate, errors = validate_record(_record(style=" Minimalist ", color="Neutral"))

@@ -198,7 +198,7 @@ def show_boundaries(optimizer: UtilityOptimizer) -> None:
         ("seats = 3 (minimum)", {"seating_capacity": 3}),
         ("seats = 2", {"seating_capacity": 2}),
         ("out of stock", {"availability": "out_of_stock"}),
-        ("missing depth", {"depth_cm": None}),
+        ("depth not stated", {"depth_cm": None}),
         ("negative price", {"price": -100}),
         ("rating 5.5", {"rating": 5.5}),
         ("NaN width", {"width_cm": float("nan")}),

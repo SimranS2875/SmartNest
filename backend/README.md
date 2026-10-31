@@ -1,4 +1,4 @@
-# SmartNest — Assignments 1.2, 2.1, 2.2, 3.1, 3.2, 4.1 & 4.2
+# SmartNest — Assignments 1.2, 2.1, 2.2, 3.1, 3.2, 4.1 & 4.2 (+ SerpApi product discovery, optional dimensions and attributes)
 
 SmartNest is an autonomous Home Planning and Product Selection Assistant. This repository contains the backend foundation, a rule-based environmental reasoner (Assignment 1.2), concurrent background worker infrastructure (Assignment 2.1), distributed agent messaging over TCP sockets (Assignment 2.2), multi-agent coordination using Contract Net Protocol (Assignment 3.1), explicit mathematical utility optimization for product selection (Assignment 3.2), a MongoDB Atlas persistence layer, a BDI agent architecture (Assignment 4.1), and knowledge representation with adaptive Gemini and live-product integration (Assignment 4.2).
 
@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-1351 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2), plus 23 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini).
+1766 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 109 net for optional attributes), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -605,7 +605,7 @@ agent = BDIAgent("home_planner_001", planner, state_store=RepositoryAgentStateSt
 
 ## Assignment 4.2: Knowledge Representation and Adaptive API Integration
 
-SmartNest now records what it learns as structured, provenance-tracked **knowledge**, uses **Gemini** to turn language into validated structure, discovers **real products** through Google Search grounding, and feeds new information through the existing BDI agent and `UtilityOptimizer`. Gemini never decides: it proposes, the deterministic validators and the optimizer judge.
+SmartNest now records what it learns as structured, provenance-tracked **knowledge**, uses **Gemini** to turn language into validated structure, discovers **real products** (originally through Google Search grounding, now through SerpApi, see the SerpApi section), and feeds new information through the existing BDI agent and `UtilityOptimizer`. Gemini never decides: it proposes, the deterministic validators and the optimizer judge.
 
 > **Verification status (31 Oct 2026, model `gemini-3.5-flash-lite`).**
 > - **Verified live:** real Gemini requests succeed, including structured requirement extraction, preference and constraint extraction, change-request interpretation, product extraction from text, and explanations (3 live tests pass; the full scenario passes with `--hybrid`).
@@ -722,3 +722,170 @@ Optional live tests (skipped unless enabled; the discovery tests skip with the r
 SMARTNEST_RUN_LIVE_TESTS=1 python -m pytest -m live -s -rs # real Gemini calls (needs GEMINI_API_KEY)
 SMARTNEST_RUN_ATLAS_TESTS=1 python -m pytest -m atlas      # real Atlas (includes knowledge persistence)
 ```
+
+## SerpApi Google Shopping Product Discovery
+
+SerpApi's `google_shopping` engine is now SmartNest's **primary live product provider**. Gemini keeps the conversational and reasoning role only (understanding requests, extracting requirements, follow-ups, explanations); **Google Search grounding is no longer used for product discovery**. `GeminiSearchProvider` remains in the code but nothing constructs it by default.
+
+```
+User -> Gemini -> structured requirements -> SerpApiCandidateSource -> parsing/validation
+     -> UtilityOptimizer -> BDI agent -> MongoDB
+```
+
+> **Verification status (1 Nov 2026).**
+> - **Verified live:** one real SerpApi search (`3 seater minimalist sofa`, `gl=in`) with 3 product-detail lookups (4 requests of the 10 allowed for this project). It returned 40 shopping results (10 considered) from real Indian retailers, with prices in INR, merchants, direct retailer URLs (Home Centre, Amazon.in, Wakefit, Flipkart) and "In stock online" offer text.
+> - **The live run found and I fixed two mapping errors** that the mocked tests could not: product details are nested under `product_results` (the parser had read them at the top level, so every offer and spec was ignored), and Google's `product_link` contains raw spaces (it was classed invalid). A trimmed copy of the real response is kept in `tests/fixtures/serpapi_real_sample.json` and replayed by `TestRealResponseShape`.
+> - **Since then:** with optional attributes (see "Optional Product Attributes and Live Recommendations" below) real listings now reach the optimizer; `python src/serpapi_check.py --atlas` shows them end to end, from the cached real response at 0 extra requests.
+> - **Not run live:** the full `adaptive_run.py --live` flow (Gemini + SerpApi + BDI), to protect the 10-request project quota; its output code was only exercised on the saved real response. Note that its scenario pre-loads a 210x110 cm room, which real listings cannot verify, so it would list products as "fit not verified" instead of recommending one.
+
+### Setup and running
+
+Add to `backend/.env` (git-ignored; never commit it): `SERPAPI_API_KEY=...` (optional: `SERPAPI_TIMEOUT_SECONDS`, `SERPAPI_MAX_RESULTS`, `SERPAPI_MAX_DETAIL_CALLS`, `SERPAPI_CACHE_TTL_HOURS`; see `.env.example`).
+
+```bash
+python src/serpapi_check.py [--atlas] [--dump raw.json]   # ONE real search; shows names, prices, merchants, URLs, optimizer result
+python src/adaptive_run.py --live [--atlas]               # Gemini -> SerpApi -> optimizer -> BDI, all real (needs both keys)
+SMARTNEST_RUN_SERPAPI_TESTS=1 python -m pytest -m serpapi_live -s   # optional live test
+```
+
+A fresh search costs 1 SerpApi search plus up to `SERPAPI_MAX_DETAIL_CALLS` (default 3) product-detail lookups. Results are cached in the `search_cache` collection (MongoDB when `--atlas`, memory otherwise) for `SERPAPI_CACHE_TTL_HOURS` (default 6), so repeating a search costs nothing.
+
+### Package (`smartnest/integrations/products/serpapi/`)
+
+| File | Purpose |
+|------|---------|
+| `config.py` | `SerpApiSettings`, `load_serpapi_settings()` (key hidden from `repr`, placeholders refused) |
+| `client.py` | `httpx` client for `https://serpapi.com/search.json` (`gl=in`, `hl=en`); 401/403, 429, timeout, 5xx, bad-JSON handling; no automatic retries (a retry could cost another search); redacts the key from errors **and from httpx's own request logging** |
+| `parsing.py` | the missing-data policy, price/URL/spec parsing, records for the optimizer |
+| `cache.py` | `SearchCache` over the repository interface: fresh/stale flags, key hash excludes the API key |
+| `provider.py` | `SerpApiProvider` (`ProductProvider`) and `SerpApiCandidateSource` (a `LiveCandidateSource`, so it satisfies `CandidateSource`; `get_candidates()` never calls the network) |
+
+### Missing-data policy (explicit, no defaults)
+
+- **Mandatory for a listing:** a product name, a valid positive INR price, and a **usable listing URL** (a direct retailer URL or, failing that, the Google Shopping product page, labelled as such). Without these the listing is rejected with the reason.
+- **Optional, stays `null` when not stated:** rating, review count, style, colour, material, seating capacity, width, depth, height. Nothing is defaulted, estimated or inferred by a model. Each product reports which optional fields were unstated (`unstated`).
+- Values are read only from structured fields or explicit wording: `about_the_product.features` (`Width`, `Depth`, `Material`, `Color`, `Style`), and "N seater" in the title/snippet. Dimensions need an explicit unit. `Length` is never assumed to be width; unlabelled `210 x 90 x 80` is not guessed; conflicting statements count as missing; a rating outside 0-5 is treated as not stated.
+- Currency comes from the price text (`₹`, `Rs.`, `INR`). Other currencies are rejected, never converted; an unstated currency is never assumed to be INR.
+- Availability is `in_stock` / `out_of_stock` only when offer or listing text says so; otherwise `unknown` (see the next section).
+
+### URLs
+
+`url_type` is one of `retailer` (an https link on a non-Google domain, from a product-details offer), `google_shopping` (any Google domain, including ad redirects), `invalid` or `missing`. The record's `url` holds **only** a retailer URL; a Google page goes in `product_page_url` and is never presented as a retailer listing. The cheapest INR offer with a direct retailer URL is preferred, via the product-details endpoint for shortlisted products (within budget, capped by `SERPAPI_MAX_DETAIL_CALLS`). Each record also carries `listing_url` / `listing_url_type`: the best usable link and its honest label (`retailer`, or `google_shopping`, or `missing` / `invalid` which are rejected). Recommendations print a Google page as "Google Shopping page, NOT a retailer link".
+
+### Known limitations (confirmed by the live run)
+
+- Google Shopping states little: in the real response no product stated width, depth, style or colour, and rating/review count appeared for only a few. These now stay `null` and the product is still scored on what is stated (see "Optional Product Attributes" below), so such a recommendation can rest on **price alone** and says so.
+- Most results carry only a Google Shopping page and **unknown stock**; only products that received a product-details lookup get a direct retailer URL and a stock statement. The number of lookups is capped (`SERPAPI_MAX_DETAIL_CALLS`) to protect a small free quota.
+- Some offers have only a relative `/goto?...` Google link; those are not used as URLs.
+- The integration for other retailers is a new `ProductProvider`; the BDI and optimizer need no change.
+
+## Optional Dimensions and Dynamic Utility Weights
+
+Recommendations no longer need room dimensions. Room limits are optional user inputs, a product's width, depth and height may be null, and nothing is ever invented. Dimensional constraints are enforced **only** for the limits the user actually gave.
+
+```bash
+python src/dimensions_run.py        # four sofas under three situations (no limits / width+depth / width only)
+```
+
+### Rules
+
+| Situation | Spatial status | What happens |
+|---|---|---|
+| The user gave no room limit | `not_required` ("No room limits specified") | Fit is not a question; every product is ranked together. |
+| Every given limit is checked against a stated size and holds | `verified` ("Fit verified") | Eligible; ranked; may be recommended. |
+| A stated size exceeds a given limit | `incompatible` ("Dimensionally incompatible") | Rejected with a reason such as `width 235 cm exceeds maximum width 210 cm by 25 cm`. |
+| A size needed for a given limit is not stated (and no stated size breaks a limit) | `unknown` ("Fit not verified") | **Not rejected, not claimed to fit.** Status `unverified`: scored, but kept in `OptimizationResult.unverified` and never `selected`. |
+
+Only limits the user gave are checked: with a width limit alone, a missing depth does not matter. One exceeded limit makes a product incompatible even if another size is unknown. Boundaries stay inclusive. Malformed values that *are* present (`0`, negative, `NaN`, text) are still invalid records.
+
+### Utility formula
+
+```
+Fit verified against a width and/or depth limit (SpaceFit counted):
+    U = 100 × (0.30·P + 0.25·Q + 0.20·F + 0.15·S + 0.10·C)
+
+SpaceFit excluded (no limits given, size not stated, or only a height limit):
+    U = 100 × (0.375·P + 0.3125·Q + 0.1875·S + 0.125·C)
+```
+
+When F is excluded the remaining weights are scaled up in proportion (`w / (1 − w_spatial)`; ratios are preserved and the effective weights always sum to 1, checked on every breakdown). F is **excluded, never scored as 0**: the `spatial` key is absent from `components`, `weights` and `contributions`, and `UtilityBreakdown.spatial_included` is `False`. With one limit only, F uses that axis alone (its sub-weight rescales to 1); with both it is the unchanged `0.5·(w/W) + 0.5·(d/D)`. `ScoringConfig.effective_weights(spatial)` holds the redistribution, and it refuses if no other component has any weight.
+
+### Changes by module
+
+- **`optimization/constraint_validator.py`**: `UserRequirements.max_width_cm / max_depth_cm / max_height_cm` optional (+ `has_spatial_limits`); `ProductCandidate.width_cm / depth_cm / height_cm` optional; `assess_space()` → `SpatialAssessment`; new `unverified` status; `FIT_LABELS`.
+- **`optimization/utility_model.py`**: `spatial_fit_score()`, dynamic weights in `score()`. `spatial_score()` is unchanged.
+- **`optimization/utility_optimizer.py`**: `OptimizationResult.unverified`, `unverified_count`, `incompatible`, `by_fit()`; `CandidateEvaluation.spatial`, `.fit_label`, `.unverified`; the explanation mentions unverified candidates.
+- **BDI** (`bdi/planner.py`, `bdi_agent.py`): room limits are no longer required before planning; fit preconditions are created only for limits that were given; `max_height_cm` is accepted; a limit that was given and then invalidated is still *unknown* (the agent waits) rather than silently dropped.
+- **Recommendations** (`adaptive/session.py`, Gemini facts/prompt/template): the selected product's `fit_status` is part of the facts; the explanation prompt forbids implying a fit unless it is "Fit verified"; the fallback template states it.
+- **SerpApi parsing**: width/depth no longer required for a product to reach the optimizer; `unstated_dimensions` is reported.
+- **CNP is untouched.** `UserRequirements.from_cnp()` still requires width and depth by default (`require_room_limits=True`). Without that, a bidder scoring without SpaceFit and a coordinator scoring with it would disagree and honest bids would be flagged as discrepancies.
+
+### Backward compatibility
+
+- All complete-record behaviour is identical: with both limits given and sizes stated, results, weights and scores are unchanged (the existing 3.2, CNP, BDI and demo outputs match apart from random IDs and ports).
+- Behaviour that **intentionally changed** (these existing tests were updated): a record missing `width_cm` or `depth_cm` was `invalid` and is now valid (`unverified` if a limit needs it, `eligible` otherwise); the BDI planner no longer lists `user.max_width_cm` / `user.max_depth_cm` as missing; a session without room information now plans instead of asking for it; the 3.2 demo's "missing depth" probe now prints `UNVERIFIED`.
+- API additions with defaults only: new optional fields on `UserRequirements`, `ProductCandidate`, `EligibilityResult`, `CandidateEvaluation`, `OptimizationResult`, `UtilityBreakdown` and `RecommendationFacts`. Code that indexed `breakdown.components["spatial"]` must now handle its absence when SpaceFit is excluded (no such code exists in this repository).
+- `OptimizationResult.rejected_count` no longer includes unverified candidates (`eligible + unverified + rejected == total_inspected`).
+- (Superseded by the next section: rating, review count, style, colour, material, seating and availability are now optional too.)
+
+## Optional Product Attributes and Live Recommendations
+
+Real Google Shopping data is sparse, so SmartNest now recommends from what a listing actually states, says what it did not, and never fills a gap.
+
+```bash
+python src/serpapi_check.py --atlas [--explain]     # real SerpApi listings -> optimizer -> recommendation (cached 6 h in Atlas)
+```
+
+### Field requirements
+
+| | Fields |
+|---|---|
+| **Mandatory** | product name, a valid positive price (and, for a live listing, a usable listing URL) |
+| **Optional (null if not stated)** | rating, review count, style, colour, material, seating capacity, dimensions |
+
+`validate_record(record, require_complete=False)`: only `product_id`, `name`, `price` and `source_agent_id` are mandatory. A value that *is* present must still be valid (a rating of 9 or a width of 0 is an error, not "missing"). `require_complete=True` restores the strict legacy rules and is what CNP negotiations use, so negotiated bids still have to be complete.
+
+### Dynamic utility scoring
+
+Only components supported by actual data are scored, and their configured weights are scaled up in proportion (`ScoringConfig.weights_for`) so the effective weights always sum to 1.
+
+| Component | Scored when | Otherwise |
+|---|---|---|
+| Price P | always | (mandatory) |
+| Quality Q | the product has a rating (the review count refines it if stated; a missing count is not scored as zero reviews) | excluded, "rating not stated" |
+| Style S / Colour C | the user stated that preference **and** the product states it | excluded: "not stated" if the product lacks it, "no preference given" (not applicable) if the user stated none |
+| SpaceFit F | a width/depth limit was given and the fit is verified | excluded (see previous section) |
+
+A missing attribute is excluded, **never scored as 0**. Every `UtilityBreakdown` now also carries `completeness` (the configured weight of the scored components over that of the *applicable* ones; 1.0 = everything that applies was scored), `excluded` (component → reason) and `unavailable` (the attributes that were needed but not stated), plus a one-sentence `completeness_note`, e.g. *"Scored on 43% of the applicable criteria (P=price). Not available, so not scored: rating, review count, style."*
+
+Ranking is still utility first; exact ties go to the more complete product, then higher quality, lower price, then id. A known consequence: a product scored on price alone can outrank a well-documented one, which is why completeness and the unavailable attributes are always shown next to the score.
+
+### Availability: IN_STOCK, OUT_OF_STOCK, UNKNOWN
+
+| State | Meaning | Outcome |
+|---|---|---|
+| `in_stock` | a configured available state (`in_stock`, `low_stock`) | eligible |
+| `out_of_stock` | confirmed (`out_of_stock`, `sold_out`, `unavailable`, `discontinued`) | **rejected**: `confirmed out of stock (availability: out_of_stock)` |
+| `unknown` | not stated, or any unrecognised value | **unverified**: scored and listed in `OptimizationResult.unverified`, never `selected`; "Availability unknown - check stock on the retailer's listing" |
+
+An unstated seating capacity (when the user needs more than one seat) is unverified in the same way. Each unverified candidate lists exactly what is unconfirmed in `gaps` (`fit`, `seating`, `availability`) and why. `AdaptiveSession` exposes the best ones as `SessionTurn.unverified_options`, separate from the confirmed recommendation.
+
+### Live result (real SerpApi data)
+
+`serpapi_check.py` for "a minimalist three-seater sofa in India under ₹30,000" (no room limits) on a real Google Shopping search retrieved on 31 Oct 2026 (4 SerpApi requests: 1 search, 3 product-details lookups; later runs reused the 6-hour Atlas cache at 0 requests). Of the 10 listings, 7 were over the ₹30,000 budget and rejected for that reason; the optimizer's result for the rest:
+
+| | Product | Price | Merchant | Listing | Stock | U | Completeness |
+|---|---|---|---|---|---|---|---|
+| **Recommended** | AMATA Eagle Solid Wood 3 Seater Sofa Cum Bed (Cream, Medium) | ₹15,009 | Amazon.in | direct retailer URL | in stock | 49.97 | 43% (price only) |
+| Confirmed #2 | Helios by Home Centre Helios Scott Nxt 3-Seater Sofa | ₹22,999 | Home Centre | direct retailer URL | in stock | 23.34 | 43% (price only) |
+| **Unverified** | Wakefit Miami Seater Sofa | ₹18,628 | Wakefit | direct retailer URL | in stock | 56.68 | 79%; seating capacity not stated |
+
+The recommendation rests on price alone: rating, review count and style were not stated by Google Shopping, so they were not scored (the minimalist preference could not be assessed). The AMATA listing is a sofa-cum-bed; nothing in the retrieved data says whether it is minimalist.
+
+### Changes and compatibility
+
+- `optimization/constraint_validator.py`: optional attributes, three availability states, `verification_gaps`, `require_complete`. `optimization/utility_model.py`: dynamic components, `completeness`, `excluded`, `unavailable`. `optimization/scoring_config.py`: `weights_for`. `optimization/utility_optimizer.py`: gaps, availability, completeness tie-break, richer explanation, `best_unverified`.
+- **SerpApi parsing:** only name, price and a usable URL are mandatory; `listing_url` / `listing_url_type` added.
+- **Gemini facts/prompt/template** and **session**: availability, URL type and completeness are part of the facts; the prompt forbids praising unavailable attributes or calling a Google link a retailer link.
+- **CNP**: two call sites pass `require_complete=True`; negotiation output is byte-identical to before.
+- **Changed behaviour** (existing tests updated): a record missing rating / review count / style / colour / material / seating / availability is no longer `invalid`; `out_of_stock` is still rejected but with the reason `confirmed out of stock (availability: ...)`; `unknown` or unrecognised availability used to be rejected as "availability not confirmed" and is now `unverified`; with no stated style or colour preference those components are no longer scored as a constant 1.0 (rankings among products with the same data are unchanged, absolute U values shift upward-normalised).

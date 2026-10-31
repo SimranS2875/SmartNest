@@ -296,7 +296,7 @@ class ProposalEvaluator:
         record = {**product, "product_id": product_id, "price": offered,
                   "source_agent_id": agent_id}
         req = UserRequirements.from_cnp(requirements)
-        evaluation = self._optimizer.evaluate_candidate(record, req)
+        evaluation = self._optimizer.evaluate_candidate(record, req, require_complete=True)  # CNP records must be complete
         price = _finite_or_none(offered) or 0.0
 
         if not evaluation.eligible:

@@ -18,7 +18,7 @@ so a bad weight vector can never reach the optimizer.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Iterable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -219,6 +219,48 @@ class ScoringConfig(BaseModel):
         if not self.exact_match_score >= self.compatible_score >= self.incompatible_score:
             raise ScoringConfigError("match scores must satisfy exact ≥ compatible ≥ incompatible")
         return self
+
+    def effective_weights(self, spatial: bool = True) -> dict[str, float]:
+        """The weights actually used for one product.
+
+        With ``spatial=True`` these are the configured weights.  With ``spatial=False`` (room
+        limits not specified, or the product's size unknown) the SpaceFit component is removed and
+        the remaining weights are scaled up in proportion so they sum to 1 again; the ``spatial``
+        key is absent.  With the default weights that is 0.30/0.80, 0.25/0.80, 0.15/0.80, 0.10/0.80
+        = 0.375, 0.3125, 0.1875, 0.125.
+
+        Raises:
+            ScoringConfigError: if no other component has any weight to take over.
+        """
+        if spatial:
+            return dict(self.weights)
+        return self.weights_for([k for k in COMPONENTS if k != "spatial"])
+
+    def weights_for(self, components: "Iterable[str]") -> dict[str, float]:
+        """Weights for exactly the given components, scaled up proportionally so they sum to 1.
+
+        Used when only some components are supported by data: each kept weight is divided by the total of the kept
+        weights, so ratios between them are preserved.  Components not listed are absent from the result.
+
+        Raises:
+            ScoringConfigError: for an unknown component, an empty selection, or a selection whose configured
+                weights are all zero (nothing could take over the excluded weight).
+        """
+        keep = list(dict.fromkeys(components))
+        unknown = [k for k in keep if k not in COMPONENTS]
+        if unknown:
+            raise ScoringConfigError(f"unknown component(s): {unknown}")
+        if len(keep) == len(COMPONENTS) and set(keep) == set(COMPONENTS):
+            return dict(self.weights)
+        kept = {k: self.weights[k] for k in keep}
+        total = sum(kept.values())
+        if not kept or not math.isfinite(total) or total <= 0:
+            raise ScoringConfigError(
+                "the excluded components cannot be redistributed: no remaining component has a weight")
+        effective = {k: v / total for k, v in kept.items()}
+        if abs(sum(effective.values()) - 1.0) > WEIGHT_SUM_TOLERANCE:  # defensive; cannot happen
+            raise ScoringConfigError("redistributed weights do not sum to 1")
+        return effective
 
     def with_weights(self, **weights: float) -> "ScoringConfig":
         """Return a copy with some top-level weights replaced (re-validated)."""

@@ -450,7 +450,7 @@ class BiddingAgent:
     ) -> None:
         """Add our own utility estimate at the offered price (informative only)."""
         offered = {**product, "price": proposal["proposed_price"], "source_agent_id": self.agent_id}
-        evaluation = self._optimizer.evaluate_candidate(offered, req)
+        evaluation = self._optimizer.evaluate_candidate(offered, req, require_complete=True)  # CNP records must be complete
         if evaluation.breakdown is not None:
             proposal["self_reported_utility"] = evaluation.breakdown.normalised_utility
             proposal["utility_breakdown"] = evaluation.breakdown.model_dump()
