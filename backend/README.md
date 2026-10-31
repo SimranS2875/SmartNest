@@ -1,6 +1,6 @@
-# SmartNest — Assignments 1.2, 2.1, 2.2, 3.1 & 3.2
+# SmartNest — Assignments 1.2, 2.1, 2.2, 3.1, 3.2, 4.1 & 4.2
 
-SmartNest is an autonomous Home Planning and Product Selection Assistant. This repository contains the backend foundation, a rule-based environmental reasoner (Assignment 1.2), concurrent background worker infrastructure (Assignment 2.1), distributed agent messaging over TCP sockets (Assignment 2.2), multi-agent coordination using Contract Net Protocol (Assignment 3.1), and explicit mathematical utility optimization for product selection (Assignment 3.2).
+SmartNest is an autonomous Home Planning and Product Selection Assistant. This repository contains the backend foundation, a rule-based environmental reasoner (Assignment 1.2), concurrent background worker infrastructure (Assignment 2.1), distributed agent messaging over TCP sockets (Assignment 2.2), multi-agent coordination using Contract Net Protocol (Assignment 3.1), explicit mathematical utility optimization for product selection (Assignment 3.2), a MongoDB Atlas persistence layer, a BDI agent architecture (Assignment 4.1), and knowledge representation with adaptive Gemini and live-product integration (Assignment 4.2).
 
 ## Project Structure
 
@@ -13,6 +13,10 @@ backend/
 │   ├── cnp_run.py                           # Assignment 3.1: CNP negotiation demo
 │   ├── utility_optimization_run.py          # Assignment 3.2: utility optimization demo
 │   ├── mongodb_check.py                     # MongoDB Atlas connectivity check
+│   ├── mongodb_smoke_test.py                # store a value, read it back (PASS/FAIL)
+│   ├── bdi_run.py                           # Assignment 4.1: BDI demonstration
+│   ├── adaptive_run.py                      # Assignment 4.2: adaptive integration demo (simulated or --live)
+│   ├── gemini_check.py                      # Assignment 4.2: verify your Gemini key / live search
 │   └── smartnest/
 │       ├── core/
 │       │   ├── models.py                    # Pydantic models (events, logs, message envelope)
@@ -36,6 +40,10 @@ backend/
 │       ├── cnp/                             # Assignment 3.1: Contract Net Protocol (see below)
 │       ├── optimization/                    # Assignment 3.2: utility model and optimizer (see below)
 │       ├── database/                        # MongoDB Atlas persistence layer (see below)
+│       ├── bdi/                             # Assignment 4.1: BDI architecture (see below)
+│       ├── knowledge/                       # Assignment 4.2: structured knowledge records and store
+│       ├── integrations/                    # Assignment 4.2: gemini/ and products/ (live discovery)
+│       ├── adaptive/                        # Assignment 4.2: AdaptiveSession (glues it all together)
 │       └── communication/
 │           ├── message_codec.py             # JSON serialization for MessageEnvelope
 │           ├── socket_transport.py          # TCP transport with length-prefixed framing
@@ -63,7 +71,11 @@ backend/
 │   └── test_utility_model.py, test_constraint_validator.py,
 │       test_utility_optimizer.py, test_utility_cnp_integration.py  # Assignment 3.2
 │   test_database_*.py, test_base_repository.py, test_mongodb_check.py  # MongoDB layer
-│   fake_mongo.py                              # in-memory fake collection for unit tests
+│   fake_mongo.py                              # fake collections for unit tests
+│   bdi_support.py                             # helpers + independent optimizer oracle for BDI tests
+│   test_bdi_*.py, test_in_memory_repository.py  # Assignment 4.1
+│   test_knowledge*.py, test_gemini_*.py, test_product_discovery.py,
+│   test_adaptive_session.py, test_integration_architecture.py   # Assignment 4.2
 ├── pyproject.toml
 ├── .env.example
 └── README.md
@@ -135,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-625 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer), plus 9 optional live-Atlas tests that are skipped unless `SMARTNEST_RUN_ATLAS_TESTS=1`.
+1351 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2), plus 23 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini).
 
 ## Architecture
 
@@ -222,7 +234,7 @@ Metric definitions:
 
 - **Assignment 3.1 (Multi-agent)**: Implemented — see below. It reuses the router, server and transport unchanged.
 - **Assignment 3.2 (Utility optimization)**: Implemented — see below. The socket transport and task handlers did not need changes.
-- **Assignment 4.1 (BDI)**: Agent B's received state is accessible through `TaskHandlerRegistry.apartment_state`. Future BDI architecture will manage beliefs separately.
+- **Assignment 4.1 (BDI)**: Implemented — see below. It is a new agent type on `BaseAgent`; Agent B's `apartment_state` is unchanged.
 - **Assignment 4.2 (Real APIs)**: External product research will use separate provider interfaces, not the communication layer.
 - **Assignment 5.1 (Security)**: `MessageEnvelope.signature` field is an Ed25519 placeholder. No crypto implemented yet.
 - **Assignment 5.2 (FastAPI)**: `RemoteAgentServer` runs in daemon threads and doesn't block HTTP request handling.
@@ -510,3 +522,203 @@ The unit tests need no network: a fake PyMongo client and an in-memory fake coll
 - `test_mongodb_check.py`: the connectivity script with a fake client, including failure and cleanup paths
 - `test_database_security.py`: git-ignore and no-credential guards, layer independence
 - `test_database_atlas_integration.py`: optional live tests
+
+## Assignment 4.1: BDI Architecture
+
+A deterministic belief-desire-intention agent that keeps a model of the world, decides which goals to pursue, commits to plans, and revises them when the world changes. It extends the existing `BaseAgent` and reads the existing `EventStream`; the CNP agents, the optimizer and all earlier code are unchanged. All decisions are plain Python (no LLM); Gemini will only be used later for conversation.
+
+### Running the Demonstration
+
+```bash
+cd backend
+python src/bdi_run.py                 # state kept in an in-memory repository (works offline)
+python src/bdi_run.py --atlas         # state kept in MongoDB Atlas (agent_states), record removed afterwards
+python src/bdi_run.py --atlas --keep  # ... and leave the record in Atlas so you can look at it
+```
+
+The demo (all figures are computed from the data, nothing is scripted):
+1. The user wants a sofa: total budget ₹2,00,000, sofa budget ₹30,000, maximum width 210 cm, minimalist (room depth 110 cm, 3 seats and a neutral colour come from the Assignment 3.2 scenario). The agent adopts an intention using the existing `UtilityOptimizer`: **SOFA_A2**.
+2. An event reports that **SOFA_A2 is out of stock**. The agent updates the availability belief, recognises that its intention is invalid, reconsiders its desires, re-runs the optimizer and commits to the highest-utility feasible alternative (**SOFA_B3**). The full before/after transition is printed, and the demo independently re-runs the optimizer to prove the choice is the true best.
+3. Unrelated updates cause **no replanning**.
+4. Real changes (style, room width, budget) do; when nothing is feasible the agent recommends nothing, and it recovers when the budget is restored.
+5. The state is saved, the agent is "restarted", and the new instance restores its beliefs, desires, intentions and history and carries on.
+
+### Architecture (`smartnest/bdi/`)
+
+| Module | Responsibility |
+|---|---|
+| `beliefs.py` | `BeliefBase`: facts (`subject`, `predicate`, `value`, `source`, `timestamp`). An update that changes nothing returns `None`; a real change returns a `BeliefChange` with old and new value. Beliefs can be **invalidated** (they then count as unknown). |
+| `conditions.py` | `Condition`: a serialisable test over beliefs (`==`, `in`, `<=`, exists, ...; the right side may be another belief). Used for activation conditions and preconditions. An unknown fact makes a condition **fail**, never pass. |
+| `desires.py` | `DesireManager`: goals with id, description, **priority** (0–100), activation conditions and **status** (active / blocked / suspended / achieved / dropped). Several goals run at once; conflicting goals are resolved by priority and the loser is reactivated when the winner goes. |
+| `intentions.py` | `IntentionManager`: committed plans with **preconditions** and ordered **actions**. Lifecycle: pending → active → completed, with **suspend / resume / cancel / replace**. Steps run through an injected executor; a `manual` step waits for outside confirmation. |
+| `planner.py` | `BDIPlanner` with goal handlers. `select_product` reads requirements from beliefs, builds candidates from the catalogues, overlays what the agent learned since (availability and price from events), runs the `UtilityOptimizer`, and turns the winner into an intention whose preconditions are the optimizer's hard constraints expressed over beliefs. `maintain_budget` monitors spend against the total budget. |
+| `bdi_agent.py` | `BDIAgent(BaseAgent)`: the deliberation cycle, event handling, persistence. |
+| `transitions.py` | `Transition`: every step with the state **before**, the state **after**, and a human-readable **explanation**. |
+| `state_store.py` | `AgentStateStore` interface, `InMemoryAgentStateStore`, and `RepositoryAgentStateStore` (any repository with `get` / `upsert` / `delete`). |
+
+### Deliberation Cycle
+
+1. **Perceive**: map the event to belief updates (`product_availability`, `price_change`, `budget_update`, plus the new `room_update` and `preference_update` event types). Updates that change nothing are dropped; malformed ones (negative price, NaN, missing product, ...) are rejected and recorded.
+2. **Filter**: ask each wanted goal whether the change can affect it. If nothing is affected and no intention became invalid, the agent **does not replan** and records why.
+3. **Check intentions**: evaluate every live intention's preconditions against the new beliefs. A failing one is recognised as invalid and suspended.
+4. **Reconsider desires**: only the affected goals are re-planned, in priority order (maintenance goals are re-checked last, against the final commitments).
+5. **Revise**: adopt a new intention, **keep** the current one (re-confirmed, figures refreshed), or **replace** it.
+6. **Act**: automatic steps run (check constraints, recommend); the final step (reserve) waits for `agent.confirm()`.
+7. **Persist**: save beliefs, desires, intentions and history if anything changed.
+
+**What counts as unrelated** (no replanning, optimizer not called): an update to a belief with the value it already has; a product that is not a candidate; another product becoming unavailable or more expensive (it cannot beat the current choice); a total-budget change that does not move the effective sofa budget (the smaller of the sofa and total budgets); event types the agent does not track. **What does replan**: any change to the room, seats, style, colour or effective budget; any change to the chosen product; another product becoming available or cheaper.
+
+### Persistence
+
+State goes through an injected `AgentStateStore`; the BDI package imports no database code and no driver. With `RepositoryAgentStateStore` over the MongoDB `BaseRepository` on `agent_states`, each agent has one document keyed by its `agent_id` containing identity, beliefs, desires, intentions, transition history and timestamps (`created_at` is kept, `updated_at` advances).
+
+```python
+from smartnest.bdi import BDIAgent, RepositoryAgentStateStore
+from smartnest.database import BaseRepository, Collections, get_connection
+
+repo = BaseRepository(get_connection().collection(Collections.AGENT_STATES), id_prefix="agent")
+agent = BDIAgent("home_planner_001", planner, state_store=RepositoryAgentStateStore(repo))  # restores if a record exists
+```
+
+- **Load on start** (`auto_load`), **save after meaningful changes** (no-op updates are not saved), **restore after restart**.
+- **Missing record**: the agent starts fresh and begins saving.
+- **Database failure on save**: recorded as a `persistence_error` transition; the agent keeps working and saves again with the next change.
+- **Database failure or corrupted record on load**: the agent runs in memory and **saving is disabled**, so an existing record can never be overwritten by a blank state. `agent.load_state()` retries.
+- For tests and offline work use `InMemoryRepository` (the real `BaseRepository` rules on a dictionary) or `InMemoryAgentStateStore`.
+
+### Integration and Compatibility
+
+- Reuses `BaseAgent` (identity, `state`, `action_log`, `handle_event`), `EnvironmentalEvent` / `EventStream` (`agent.process_events(stream)`), the `UtilityOptimizer` and its constraint validator, and the `ProductCatalog` classes (via `CatalogCandidateSource`).
+- Only addition outside `bdi/`, `database/repositories/in_memory.py` and the demo: two `EventType` members (`room_update`, `preference_update`). The reflex agent ignores them.
+- **Assignment 4.2 (real APIs):** products enter only through the `CandidateSource` protocol (`get_candidates()` returning records in the optimizer's schema). A retailer-API source replaces `CatalogCandidateSource` without touching beliefs, desires, the planner or the agent. Incomplete API records are rejected by the optimizer's validation, never defaulted.
+- **Goal types are pluggable:** add a `GoalHandler` (`plan` + `is_affected_by`) for a new kind of goal (for example, choosing a table) and register it with `BDIPlanner`.
+
+### Tests
+
+340 new tests (965 in total, plus 13 optional live-Atlas tests):
+- `test_bdi_beliefs.py`: updates, no-op detection, invalidation, `ensure`, conditions
+- `test_bdi_desires_intentions.py`: prioritisation, conditions, statuses, conflicts; intention lifecycle, validation, execution, failure handling
+- `test_bdi_planner.py`: requirements from beliefs, planning always agrees with running the optimizer directly, preconditions detect each invalid choice, relevance rules
+- `test_bdi_agent.py`: the SOFA_A2 scenario, unrelated events (with a spy proving the optimizer is not called), budget / room / preference / price changes, multiple goals, confirmation, malformed input, framework integration
+- `test_bdi_persistence.py`: save, restore, missing record, load and save failures, corrupted records, no overwrite after a failed load
+- `test_in_memory_repository.py`, `test_bdi_architecture.py` (BDI imports no database, network or LLM; nothing else imports BDI; the demo runs), `test_bdi_atlas_integration.py` (opt-in: `SMARTNEST_RUN_ATLAS_TESTS=1 python -m pytest -m atlas`)
+
+## Assignment 4.2: Knowledge Representation and Adaptive API Integration
+
+SmartNest now records what it learns as structured, provenance-tracked **knowledge**, uses **Gemini** to turn language into validated structure, discovers **real products** through Google Search grounding, and feeds new information through the existing BDI agent and `UtilityOptimizer`. Gemini never decides: it proposes, the deterministic validators and the optimizer judge.
+
+> **Verification status (31 Oct 2026, model `gemini-3.5-flash-lite`).**
+> - **Verified live:** real Gemini requests succeed, including structured requirement extraction, preference and constraint extraction, change-request interpretation, product extraction from text, and explanations (3 live tests pass; the full scenario passes with `--hybrid`).
+> - **Not verified live: Google Search grounding.** With the key tested, every call that enables the `google_search` tool was rejected with **HTTP 429 `RESOURCE_EXHAUSTED`** on `gemini-3.5-flash-lite`, `gemini-3.6-flash` and `gemini-3.8-flash` (plain calls on the same key work; `gemini-2.5-flash` returns 404 for new keys). That points to a project with no grounding quota, which Google meters separately and which usually needs a billing-enabled project, but the error text does not say so. The grounded-search code is therefore tested only against mocks and real SDK response objects. **No real product listing or URL has been retrieved yet.** Once the key's project has grounding access, run `python src/gemini_check.py --search`.
+
+### Configuration
+
+Add to `backend/.env` (git-ignored; never commit it):
+
+```ini
+GEMINI_API_KEY=<your key from https://aistudio.google.com/apikey>
+GEMINI_MODEL=gemini-3.5-flash-lite      # optional; models are retired over time, see https://ai.google.dev/gemini-api/docs/models
+GEMINI_TIMEOUT_SECONDS=60               # optional
+```
+
+`.env.example` holds placeholders only. A missing or placeholder key raises a clear `GeminiConfigError`; the key never appears in `repr()`, logs or error messages (all SDK errors are redacted). The ordinary test suite needs no key and makes no network calls.
+
+### Running It
+
+```bash
+cd backend
+python src/gemini_check.py              # one REAL structured-extraction request (needs the key)
+python src/gemini_check.py --search     # + REAL Google-Search-grounded product discovery
+python src/adaptive_run.py              # full scenario, SIMULATED Gemini and market (no key, no network)
+python src/adaptive_run.py --live       # full scenario with REAL Gemini and REAL products (needs grounding quota)
+python src/adaptive_run.py --hybrid     # REAL Gemini for every language task, SIMULATED market (works without grounding quota)
+python src/adaptive_run.py --atlas      # persist knowledge and agent state in MongoDB Atlas (add --live for real data)
+```
+
+`gemini_check.py` exits 0 (verified), 1 (the API call failed) or 2 (not configured). **Simulated and hybrid modes are labelled as such on every run**: the products are invented and their links end in `.invalid`, so they cannot be mistaken for real listings. In simulated mode the "Gemini" is also a scripted stand-in; in hybrid mode every language task is a real Gemini call and only the search results are invented. Only `--live` shows real products. In `--live` mode, live listings rarely change on demand, so the "new information" step injects a clearly labelled simulated availability event for the real recommended listing.
+
+### The Scenario (what `adaptive_run.py` demonstrates)
+
+1. The user asks for *"a minimalist three-seater sofa under ₹30,000"*.
+2. Gemini returns structured requirements (budget 30000, 3 seats, minimalist). They are validated again by the deterministic rules, recorded as knowledge, and applied to the BDI agent as beliefs. Room limits (210 cm wall, 110 cm depth) come from the user's earlier home-project knowledge, not from the model.
+3. Product discovery retrieves listings; incomplete or unverifiable ones are rejected with reasons.
+4. Listings are saved as knowledge (source URL, retrieval time, confidence). The optimizer ranks the feasible ones; the BDI agent adopts the best and an explanation is produced from the optimizer's own figures.
+5. New information arrives (a listing goes out of stock): the belief updates, the intention is found invalid, the agent replans, and the recommendation changes.
+6. The user says *"I'd prefer contemporary instead"*: Gemini proposes the change, validation applies it, the market is searched again, and the agent replans.
+
+### Packages
+
+| Package | Responsibility |
+|---|---|
+| `knowledge/` | `KnowledgeRecord` (id, kind, entity, attributes, relationships, provenance, confidence, version, history, invalidation), per-kind validated attributes, and `KnowledgeStore` over an injected repository. No database driver, LLM or agent code. |
+| `integrations/gemini/` | `GeminiSettings`, `GenaiClient` (the only code touching the `google-genai` SDK), `GeminiService`, Pydantic schemas, error types with secret redaction, `ScriptedLLMClient` for tests. Independent of BDI, CNP and the optimizer. |
+| `integrations/products/` | `GeminiSearchProvider`, listing normalizer, URL validation and provenance, `LiveCandidateSource` / `CompositeCandidateSource` (the BDI `CandidateSource` interface), change detection. |
+| `adaptive/` | `AdaptiveSession`: the only module that combines Gemini, discovery, knowledge and the BDI agent. Nothing imports it. |
+
+#### Knowledge
+
+Seven kinds: `requirements`, `home_project`, `room`, `budget`, `product_spec`, `observation`, `agent_knowledge`. Records are validated on creation and on every update (a failed update leaves the record untouched). An update that changes nothing is a no-op; a real change bumps the version and keeps the replaced values in `history`. Records are never silently deleted: they are **invalidated** with a reason and then excluded from queries unless asked for. Timestamps are strictly increasing within a process, so "most recently modified" is unambiguous even on Windows' coarse clock. Records live in the `knowledge` collection (`KNOWLEDGE_COLLECTION`), one document per record keyed by `knowledge_id`.
+
+#### Gemini (`GeminiService`)
+
+| Capability | Method |
+|---|---|
+| Requirement extraction (budgets, size limits, seats, style, colour) | `extract_requirements` |
+| Preference and constraint extraction (liked/disliked, must-haves, hard/soft constraints with quotes) | `extract_preferences` |
+| Product information extraction from supplied text | `extract_products` |
+| Recommendation explanation | `explain_recommendation` |
+| Conversational plan changes | `interpret_change_request` |
+
+Every answer is requested with a Pydantic schema and then **validated**. An invalid answer is re-asked once with the specific problem, then rejected (`GeminiResponseError`); it is never patched up. Transient errors (429, 5xx, timeouts) are retried with exponential backoff. User messages and web text are wrapped in tags and the system prompt says they are data, not instructions. Explanations are checked against the optimizer's facts: if the text contains a number that is not in the facts, or does not name the recommended product, a deterministic template is used instead.
+
+The client uses the SDK's `models.generate_content` call, which the current documentation describes as *legacy but fully supported* (the newer Interactions API can be added behind the same `LLMClient` protocol). Tools and a response schema are **never combined in one call**: grounded search returns text plus source metadata, and structured extraction is a separate, tool-free call. That works on every model regardless of tool-combination support.
+
+#### Real product discovery (`GeminiSearchProvider`)
+
+1. **Search**: one call with Google Search grounding (and the URL-context tool so product pages are read).
+2. **Extract**: a tool-free structured call turns that text into listings; the model may only use URLs from the sources the search reported.
+3. **Normalize**: every listing is validated or rejected with reasons.
+
+Rules that keep invented data out:
+- **A link must be a reported source.** Google reports each source as a `vertexaisearch.cloud.google.com/grounding-api-redirect/...` link; `RedirectResolver` reads its `Location` header (the only host ever contacted, and the destination page is never requested) to get the real page URL. A listing whose URL is not among the reported sources is rejected, as are non-`https` URLs, URLs with credentials, IP addresses and non-public hosts. Tracking parameters are stripped.
+- **No search sources, no listings.** The provider never falls back to the model's own knowledge.
+- **The price must appear in the retrieved text**, be positive and in INR.
+- **Nothing is defaulted.** Missing rating, review count, seats, material, colour, style, or dimension unit rejects the listing (the optimizer needs them). Dimensions are converted from mm/in and checked for plausibility. A style the model had to infer is recorded in `provenance.inferred_fields`. An unstated availability stays `unknown`, which the optimizer then refuses to treat as available.
+- **Images** are kept only if a `HEAD` request shows they really serve an image; otherwise dropped (never a reason to reject the product).
+- **Freshness:** each record carries `verified_at`; `LiveCandidateSource` withholds listings older than `max_age` (default 6 h) or with no usable timestamp.
+
+Honest limits: the prose a grounded model writes still comes from a model. These checks bound what can slip through; they do not make a listing guaranteed correct. Every record keeps its source URL so a person can verify it. Real listings often lack a depth, rating or review count, so a live run may reject many listings; the demo and `gemini_check.py --search` print every rejection with its reason.
+
+#### Safeguards: Gemini cannot override hard constraints
+
+- It returns *proposals*; every value is re-validated by `normalise_requirement` and then judged by the optimizer's constraint validator. Model claims like `utility: 100` or `fits_room: true` are not in any schema and are ignored.
+- **A model-extracted value can never relax a limit already on file** (a larger budget, width or depth, or fewer seats). It is held as *pending* and reported; it applies only after `session.confirm_pending()`. Tightening a limit, stating one for the first time, and changing style or colour apply immediately.
+- Utility is computed only by the `UtilityOptimizer`. Gemini only turns its output into prose.
+
+#### Live information and the BDI agent
+
+`LiveCandidateSource` satisfies the BDI `CandidateSource` interface and **never touches the network from `get_candidates()`**: it serves a snapshot filled by an explicit `refresh()`. `detect_changes()` turns the difference between snapshots into ordinary `EnvironmentalEvent`s (price changes, availability changes, delisted products), which the existing belief-update and replanning machinery handles unchanged. An empty candidate pool makes the sofa goal *wait*, not become *blocked*. The existing `CatalogCandidateSource` still works, alone or combined with live listings through `CompositeCandidateSource`.
+
+### Retailer APIs (inspected, none integrated)
+
+The spec prefers official retailer APIs "when credentials and access are available". They are not, so none is bundled, and `ProductProvider` is the plug-in point for one. What the current documentation says:
+
+- **Amazon:** the Product Advertising API 5.0 is **retired** (migration cut-off 30 April 2026, retirement around 15 May 2026) and replaced by the **Creators API**, which needs new credentials and uses OAuth 2.0. See https://affiliate-program.amazon.com/creatorsapi/docs/en-us/paapiv5-deprecation and https://affiliate-program.amazon.in/creatorsapi/docs/en-us/migrating-to-creatorsapi-from-paapi. The old API must not be used.
+- **Flipkart:** the Affiliate API needs a registered affiliate account and a private token sent in `Fk-Affiliate-Id` / `Fk-Affiliate-Token` headers. See https://affiliate.flipkart.com/api-docs/af_faq.html.
+- **Scraping retailer sites** is not done.
+
+### Tests
+
+386 new tests (1351 in total, 23 skipped), none needing credentials or network:
+- `test_knowledge.py`: creation, validation, updates, history, invalidation, serialisation, the store, failures
+- `test_gemini_integration.py`: configuration; the SDK client against real SDK response and error objects (grounding metadata, URL-context status, error translation, key redaction); the service (invalid, truncated and hostile outputs, re-asks, retries, explanation grounding)
+- `test_product_discovery.py`: URL checks and provenance, redirect resolution, normalization rejections, the three-stage provider, live-source staleness, `CandidateSource` compatibility with the BDI planner, change detection
+- `test_adaptive_session.py`: the whole scenario, new information, conversation, the no-silent-loosening safeguard, and failure handling at every stage
+- `test_integration_architecture.py`: dependency direction (Gemini imports no BDI/CNP/optimizer; the SDK is not even loaded on import), secret scans, the live-check script, the demo
+
+Optional live tests (skipped unless enabled; the discovery tests skip with the reason if the key has no grounding quota):
+
+```bash
+SMARTNEST_RUN_LIVE_TESTS=1 python -m pytest -m live -s -rs # real Gemini calls (needs GEMINI_API_KEY)
+SMARTNEST_RUN_ATLAS_TESTS=1 python -m pytest -m atlas      # real Atlas (includes knowledge persistence)
+```
