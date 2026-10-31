@@ -65,6 +65,7 @@ class RejectedListing:
     name: str | None
     url: str | None
     reasons: list[str]
+    details: dict | None = None   # what is known about the product (price, merchant, missing fields...)
 
 
 @dataclass
@@ -80,6 +81,9 @@ class DiscoveryResult:
     search_queries: list[str] = field(default_factory=list)
     extracted_count: int = 0
     notes: list[str] = field(default_factory=list)
+    api_calls: int = 0              # paid SerpApi requests made by this run (0 when served from cache)
+    cache_hits: int = 0             # responses served from the MongoDB search cache
+    stale: bool = False             # True if any data came from an expired cache entry (SerpApi failed)
 
     def summary(self) -> str:
         return (f"{len(self.sources)} source page(s) -> {self.extracted_count} product(s) extracted -> "
