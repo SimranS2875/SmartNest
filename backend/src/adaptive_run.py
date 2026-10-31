@@ -4,9 +4,9 @@
 Run from the ``backend`` directory:
 
     python src/adaptive_run.py                 # SIMULATED Gemini + market (no key, no network)
-    python src/adaptive_run.py --live          # REAL Gemini + Google Search grounding (needs GEMINI_API_KEY)
-    python src/adaptive_run.py --hybrid        # REAL Gemini for language, SIMULATED market (needs GEMINI_API_KEY;
-                                               #   use this when your key has no Google Search grounding quota)
+    python src/adaptive_run.py --live          # REAL Gemini (language) + REAL SerpApi Google Shopping (products);
+                                               #   needs GEMINI_API_KEY and SERPAPI_API_KEY in backend/.env
+    python src/adaptive_run.py --hybrid        # REAL Gemini for language, SIMULATED market (needs GEMINI_API_KEY only)
     python src/adaptive_run.py --atlas         # also persist knowledge and agent state in MongoDB Atlas
     python src/adaptive_run.py --live --atlas
 
@@ -23,6 +23,7 @@ The story (the same in both modes):
 
 SIMULATED mode is for demonstration only: the "Gemini" is a scripted stand-in and the products are
 invented, with ``.invalid`` links that cannot resolve.  Only ``--live`` shows real data.
+Google Search grounding is NOT used for product discovery; SerpApi supplies the listings.
 """
 
 from __future__ import annotations
@@ -213,15 +214,24 @@ def show_discovery(turn: SessionTurn) -> None:
     if d is None:
         return
     print(f"  Discovery ({d.provider_id}): {d.summary()}")
+    if d.api_calls or d.cache_hits:
+        print(f"    SerpApi requests made: {d.api_calls}; served from cache: {d.cache_hits}"
+              f"{'; STALE data in use' if d.stale else ''}; data fetched {d.retrieved_at.isoformat()}")
     for q in d.search_queries:
         print(f"    search query: {q}")
     for source in d.sources[:8]:
         print(f"    source: {source}")
     for l in d.listings:
-        print(f"    ACCEPTED  {l['name'][:44]:44} ₹{l['price']:>9,.0f}  {l['width_cm']:g}x{l['depth_cm']:g} cm  "
-              f"{l['availability']:12}  {l['url']}")
+        link = l["url"] or f"(no direct retailer link; {l.get('url_type', 'n/a')}: {l.get('product_page_url')})"
+        size = f"{l['width_cm']:g}x{l['depth_cm']:g} cm" if l.get("width_cm") and l.get("depth_cm") else "size not stated"
+        print(f"    ACCEPTED  {l['name'][:44]:44} ₹{l['price']:>9,.0f}  {size}  "
+              f"{l['availability']:12}  {l.get('merchant') or ''}  {link}")
     for r in d.rejected:
-        print(f"    REJECTED  {(r.name or '?')[:44]:44} {'; '.join(r.reasons)[:110]}")
+        known = ""
+        if r.details:
+            price = r.details.get("price")
+            known = f"[{r.details.get('merchant') or '?'}, {('₹%s' % format(price, ',.0f')) if price else 'no price'}] "
+        print(f"    REJECTED  {(r.name or '?')[:44]:44} {known}{'; '.join(r.reasons)[:120]}")
     for note in d.notes:
         print(f"    note: {note}")
 
@@ -259,12 +269,20 @@ def show_turn(session: AdaptiveSession, turn: SessionTurn) -> None:
     for need in turn.needs:
         print(f"  needs: {need}")
     rec = turn.recommendation
+    for o in turn.unverified_options:
+        print(f"  NOT VERIFIED (not a confirmed recommendation): {o['name']} ₹{o['price']:,.0f} "
+              f"[{', '.join(o['gaps'])} unconfirmed; {o['availability_label']}]")
     if rec is None:
         print("  RECOMMENDATION: none")
         return
     print(f"  RECOMMENDATION: {rec.name}")
     print(f"    price ₹{rec.price:,.0f} | utility {rec.utility:.2f}/100 | retailer {rec.retailer}")
-    print(f"    link: {rec.url} (verified {rec.verified_at})")
+    kind = {"retailer": "direct retailer listing", "google_shopping": "Google Shopping page, NOT a retailer link"}.get(
+        rec.url_type or ("retailer" if rec.url else ""), "link")
+    print(f"    link: {rec.listing_url or rec.url} ({kind}; verified {rec.verified_at})")
+    if rec.completeness is not None and rec.completeness < 1:
+        print(f"    score rests on {rec.completeness:.0%} of the applicable criteria; not available: "
+              f"{', '.join(rec.facts.unavailable_attributes) or 'none'}")
     print(f"    why ({rec.explanation.source}): {rec.explanation.text}")
 
 
@@ -327,8 +345,9 @@ def main(live: bool = False, atlas: bool = False, hybrid: bool = False) -> int:
         if live:
             from smartnest.integrations.gemini import load_gemini_settings
             settings = load_gemini_settings()
-            print(f"  MODE: LIVE - real Gemini API (model {settings.model}) with Google Search grounding")
-            print("  Products below come from the web; prices and availability are as retrieved now.")
+            print(f"  MODE: LIVE - real Gemini API (model {settings.model}) for language; "
+                  "real SerpApi Google Shopping for products (no Google Search grounding)")
+            print("  Products below come from SerpApi; prices are as retrieved (or as cached, see the cache lines).")
         elif hybrid:
             from smartnest.integrations.gemini import load_gemini_settings
             print(f"  MODE: HYBRID - REAL Gemini (model {load_gemini_settings().model}) for all language tasks; "
@@ -341,12 +360,23 @@ def main(live: bool = False, atlas: bool = False, hybrid: bool = False) -> int:
 
         knowledge = KnowledgeStore(knowledge_repo)
         gemini = GeminiService(client)
-        provider = GeminiSearchProvider(gemini, resolver=(None if live else IdentityResolver()),
-                                        provider_id="gemini_search" if live else "simulated_search")
+        provider = GeminiSearchProvider(gemini, resolver=IdentityResolver(), provider_id="simulated_search")
+        serp_source = None
+        if live:
+            from smartnest.integrations.products.serpapi import (
+                SEARCH_CACHE_COLLECTION, SerpApiCandidateSource, SerpApiConfigError, load_serpapi_settings)
+            try:
+                serp_settings = load_serpapi_settings()
+            except SerpApiConfigError as exc:
+                print(f"  CANNOT RUN --live: {exc}")
+                return 2
+            cache_repo = (BaseRepository(connection.collection(SEARCH_CACHE_COLLECTION), id_prefix="sc")
+                          if atlas else InMemoryRepository(SEARCH_CACHE_COLLECTION, id_prefix="sc"))
+            serp_source = SerpApiCandidateSource.from_settings(serp_settings, cache_repository=cache_repo)
         if hybrid:
             gemini = GeminiService(client, max_api_retries=1, backoff_seconds=2.0)
             provider = GeminiSearchProvider(gemini, resolver=IdentityResolver(), provider_id="simulated_search")
-        source = LiveCandidateSource(provider, max_age=timedelta(hours=6))
+        source = serp_source or LiveCandidateSource(provider, max_age=timedelta(hours=6))
         planner = BDIPlanner.default(UtilityOptimizer(), source)
         agent = BDIAgent("bdi_adaptive_demo", planner, state_store=RepositoryAgentStateStore(state_repo))
         session = AdaptiveSession(agent=agent, gemini=gemini, source=source, knowledge=knowledge,

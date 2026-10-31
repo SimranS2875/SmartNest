@@ -24,3 +24,6 @@ worker_metrics.csv
 .idea/
 .DS_Store
 Thumbs.db
+
+# SerpApi local usage counter
+backend/.serpapi_usage.json

@@ -29,7 +29,13 @@ from smartnest.integrations.products.url_validation import (
     check_url,
 )
 
+from smartnest.integrations.products.serpapi import (  # noqa: E402  (after the modules it builds on)
+    SerpApiCandidateSource,
+    SerpApiProvider,
+)
+
 __all__ = [
+    "SerpApiCandidateSource", "SerpApiProvider",
     "AllowedUrls", "CompositeCandidateSource", "DiscoveryResult", "GeminiSearchProvider", "HttpImageVerifier",
     "LiveCandidateSource", "NormalizedListing", "ProductDiscoveryError", "ProductProvider", "ProductQuery",
     "RedirectResolver", "RejectedListing", "canonical_key", "check_url", "detect_changes",
