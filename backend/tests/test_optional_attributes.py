@@ -507,3 +507,29 @@ class TestRecommendationOutput:
         turn = w.session.request("I'd like a minimalist three-seater sofa under ₹30,000 for my living room.")
         assert turn.unverified_options == [] and turn.recommendation.availability == "in_stock"
         assert turn.recommendation.completeness == 1.0
+
+
+class TestKnowledgePersistenceOfRealListings:
+    """Regression: the first live run found that listings with a URL type / Google page could not be saved."""
+
+    def test_a_real_shaped_listing_is_persisted_with_its_url_labels(self):
+        from smartnest.adaptive.session import SessionTurn
+        from smartnest.integrations.products import DiscoveryResult, ProductQuery
+        from smartnest.knowledge import KnowledgeKind
+        from tests.test_adaptive_session import World
+        from tests.test_serpapi_discovery import build, shopping_item
+        w = World()
+        direct = build(shopping_item()).record
+        google = build(shopping_item(product_id="G1", title="Google only sofa"), details=None).record
+        result = DiscoveryResult(provider_id="serpapi_google_shopping", query=ProductQuery(), listings=[direct, google])
+        turn = SessionTurn(kind="request")
+        w.session._remember_products(result, turn)
+        assert not any("Knowledge was not saved" in n for n in turn.notes), turn.notes
+        assert w.knowledge.count(KnowledgeKind.PRODUCT_SPEC) == 2
+        saved = {r.attributes["product_id"]: r.attributes for r in w.knowledge.find(KnowledgeKind.PRODUCT_SPEC)}
+        assert saved[direct["product_id"]]["url_type"] == "retailer"
+        assert saved[direct["product_id"]]["url"].startswith("https://www.pepperfry.com/")
+        g = saved["SERP_G1"]
+        assert g["url_type"] == "google_shopping" and g.get("url") is None and g["product_page_url"].startswith("https://www.google.com/")
+        assert g["rating"] == 4.4                                                          # stated -> stored
+        assert all(g.get(k) is None for k in ("style", "colour", "width_cm"))             # unstated stays null
