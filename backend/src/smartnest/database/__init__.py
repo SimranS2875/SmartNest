@@ -26,7 +26,12 @@ from smartnest.database.errors import (
     InvalidDocumentError,
     redact_text,
 )
-from smartnest.database.repositories import BaseRepository, Document, Repository
+from smartnest.database.repositories import (
+    BaseRepository,
+    Document,
+    InMemoryRepository,
+    Repository,
+)
 from smartnest.database.settings import DatabaseSettings, load_settings
 
 __all__ = [
@@ -41,6 +46,7 @@ __all__ = [
     "Document",
     "DuplicateDocumentError",
     "HealthStatus",
+    "InMemoryRepository",
     "InvalidDocumentError",
     "MongoConnection",
     "Repository",

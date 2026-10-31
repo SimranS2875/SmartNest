@@ -36,6 +36,9 @@ class EventType(str, Enum):
     MISSING_INFORMATION = "missing_information"
     PRODUCT_VALIDATION = "product_validation"
     PRICE_CHANGE = "price_change"
+    # Assignment 4.1: changes the user (not the market) makes to the request.
+    ROOM_UPDATE = "room_update"
+    PREFERENCE_UPDATE = "preference_update"
 
 
 class ActionResultType(str, Enum):
