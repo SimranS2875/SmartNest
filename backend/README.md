@@ -12,6 +12,7 @@ backend/
 │   ├── agent_a_client.py                    # Assignment 2.2: Agent A client (Terminal 2)
 │   ├── cnp_run.py                           # Assignment 3.1: CNP negotiation demo
 │   ├── utility_optimization_run.py          # Assignment 3.2: utility optimization demo
+│   ├── mongodb_check.py                     # MongoDB Atlas connectivity check
 │   └── smartnest/
 │       ├── core/
 │       │   ├── models.py                    # Pydantic models (events, logs, message envelope)
@@ -34,6 +35,7 @@ backend/
 │       │   └── metrics.py                   # Thread-safe performance metrics
 │       ├── cnp/                             # Assignment 3.1: Contract Net Protocol (see below)
 │       ├── optimization/                    # Assignment 3.2: utility model and optimizer (see below)
+│       ├── database/                        # MongoDB Atlas persistence layer (see below)
 │       └── communication/
 │           ├── message_codec.py             # JSON serialization for MessageEnvelope
 │           ├── socket_transport.py          # TCP transport with length-prefixed framing
@@ -60,6 +62,8 @@ backend/
 │   │   test_product_catalog.py, test_cnp_integration.py      # Assignment 3.1
 │   └── test_utility_model.py, test_constraint_validator.py,
 │       test_utility_optimizer.py, test_utility_cnp_integration.py  # Assignment 3.2
+│   test_database_*.py, test_base_repository.py, test_mongodb_check.py  # MongoDB layer
+│   fake_mongo.py                              # in-memory fake collection for unit tests
 ├── pyproject.toml
 ├── .env.example
 └── README.md
@@ -74,6 +78,8 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -e ".[dev]"
 ```
+
+MongoDB Atlas (optional until a feature needs it): see [MongoDB Atlas Integration](#mongodb-atlas-integration-persistence-infrastructure) for creating `backend/.env`.
 
 ## Running the Simulation (Assignments 1.2 & 2.1)
 
@@ -129,7 +135,7 @@ cd backend
 python -m pytest
 ```
 
-469 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2).
+625 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer), plus 9 optional live-Atlas tests that are skipped unless `SMARTNEST_RUN_ATLAS_TESTS=1`.
 
 ## Architecture
 
@@ -408,3 +414,99 @@ The 3.2 tests run without network access or external services and give the same 
 - **5.1 (Signing):** No security logic was added. `MessageEnvelope.signature` is untouched.
 - **5.2 (FastAPI):** `UtilityOptimizer.optimize_async()` runs in a worker thread, so the event loop stays free.
 - **Gemini / MongoDB:** An LLM may later turn natural language into `UserRequirements`, but all scores are computed by Python. Every model is a JSON-serialisable Pydantic model, ready for document storage.
+
+## MongoDB Atlas Integration (Persistence Infrastructure)
+
+SmartNest now has a persistence layer for MongoDB Atlas. This milestone is **infrastructure only**: it connects, pings, and provides repositories. No existing application data is stored or migrated yet, and nothing in the agents, workers, CNP or optimizer imports it.
+
+### Setup
+
+1. **Create a database user and allow your IP in Atlas** (Database Access and Network Access).
+2. **Install the dependencies** (`pymongo` and `python-dotenv` are now part of `pip install -e ".[dev]"`).
+3. **Create `backend/.env`** from the template and fill in the real values:
+
+   ```bash
+   cd backend
+   cp .env.example .env        # Windows: copy .env.example .env
+   ```
+
+   ```ini
+   MONGODB_URI=mongodb+srv://<db_username>:<db_password>@<cluster>.mongodb.net/
+   MONGODB_DATABASE=smartnest
+   ```
+
+   If the password contains special characters (`@ : / ? # %`), URL-encode them (`@` becomes `%40`).
+4. **Verify the connection:**
+
+   ```bash
+   python src/mongodb_check.py
+   ```
+
+   It loads the configuration, connects, pings, inserts a temporary document, reads it back and verifies it, deletes it, and closes the connection. It exits with status 0 on success. The temporary document lives in a scratch collection (`_smartnest_connectivity_check`) that is removed again if the script created it, so the database is left as it was found.
+
+Optional settings: `MONGODB_SERVER_SELECTION_TIMEOUT_MS` (default 5000) and `MONGODB_MAX_POOL_SIZE` (default 50). Real environment variables override `.env`.
+
+### Security
+
+- `backend/.env` is listed in `.gitignore` and is not tracked. **Never commit credentials.** `.env.example` holds placeholders only.
+- Credentials never appear in `repr()`, `str()`, log lines, error messages or output: the URI is stored with `repr=False`, error messages pass through redaction (`mongodb://***@host`), and driver exceptions are not chained into tracebacks. `mongodb_check.py` prints only the host and database name.
+- Tests guard this: `.env` must be git-ignored and untracked, `.env.example` must contain only placeholders, no credential-shaped URI may appear in source or docs, and (when `backend/.env` exists) the real password must appear in no committable file.
+- If a password was ever shared in a chat, a ticket or a commit, rotate it in Atlas (Database Access → Edit user).
+
+### Package (`smartnest/database/`)
+
+| Module | Responsibility |
+|---|---|
+| `settings.py` | `DatabaseSettings`, `load_settings()`: reads `backend/.env` and the environment, validates the URI and database name |
+| `connection.py` | `MongoConnection`: one shared, thread-safe `MongoClient` with connection pooling, `ping()`, `check_health()`, `close()`; `get_connection()` / `close_connection()` for the process-wide instance |
+| `collections.py` | `Collections`: `users`, `home_projects`, `products`, `agent_states`, `tasks`, `messages`, `recommendations`, `negotiations` |
+| `repositories/base_repository.py` | `Repository` (abstract interface) and `BaseRepository` (reusable CRUD on one collection) |
+| `errors.py` | `DatabaseError` hierarchy and credential redaction; no raw PyMongo exception escapes |
+
+```python
+from smartnest.database import BaseRepository, Collections, get_connection, close_connection
+
+conn = get_connection()                       # built lazily from backend/.env
+conn.connect()                                # create the client and ping (fail fast at startup)
+products = BaseRepository(conn.collection(Collections.PRODUCTS), id_prefix="prd")
+
+doc_id = products.create({"name": "Sofa", "price": 27499})
+products.get(doc_id)
+products.update(doc_id, {"price": 25000})
+products.find({"name": "Sofa"}, sort=[("price", 1)], limit=10)
+products.delete(doc_id)
+
+close_connection()                            # at shutdown
+```
+
+`BaseRepository` operations: `create`, `create_many`, `get`, `find_one`, `find`, `count`, `exists`, `update`, `update_many`, `upsert`, `delete`, `delete_many`. Conventions:
+- `_id` values are strings (generated as `<prefix>_<16 hex>` unless you supply one, e.g. a model's `event_id`).
+- `created_at` / `updated_at` are maintained automatically as timezone-aware UTC datetimes.
+- Pydantic models are accepted; input documents are never mutated.
+- `delete_many({})` is refused unless `allow_all=True`; negative `limit` / `skip` are rejected.
+- Failures are `DatabaseConnectionError`, `DatabaseOperationError`, `DuplicateDocumentError`, `InvalidDocumentError` or `DatabaseConfigError`.
+
+### Design Notes for Later Assignments
+
+- **4.1 (BDI):** Agents should depend on the `Repository` interface, never on PyMongo. Beliefs, desires and intentions can be stored in `agent_states` with `upsert(agent_id, {...})`, which keeps `created_at` and bumps `updated_at`; a BDI agent under test can be given an in-memory `Repository`. Because the optimizer is a pure function and the repository holds no agent logic, neither needs to change.
+- **Catalogues (4.2):** A products repository can sit behind the existing `CatalogProvider` / `ProductCatalog` abstractions as an implementation detail; the workers and bidding agents keep calling the same interfaces.
+- **Background workers:** `MongoClient` is thread-safe and pooled, so all workers should share the one client from `get_connection()`; repositories hold no state and are safe to share. Do not create a client per thread or per request.
+- **FastAPI (5.2):** Call `get_connection().connect()` in the app's startup (lifespan) and `close_connection()` at shutdown. PyMongo is synchronous, so from `async` endpoints run repository calls with `await asyncio.to_thread(...)` (or Starlette's `run_in_threadpool`) so the event loop stays free. `check_health()` never raises and suits a `/health` endpoint.
+- **Gemini:** The database layer imports nothing from the agents, the LLM or any other feature (enforced by a test).
+
+### Database Tests
+
+```bash
+python -m pytest                                  # unit tests; Atlas tests are skipped
+$env:SMARTNEST_RUN_ATLAS_TESTS = "1"; python -m pytest -m atlas     # PowerShell: live Atlas tests
+SMARTNEST_RUN_ATLAS_TESTS=1 python -m pytest -m atlas               # bash
+```
+
+The unit tests need no network: a fake PyMongo client and an in-memory fake collection stand in for Atlas (`tests/fake_mongo.py`). The optional Atlas tests run a CRUD round trip, duplicate-key handling, sorting and paging, and concurrent writes from several threads, each in a uniquely named scratch collection that is dropped afterwards.
+
+- `test_database_settings.py`: loading, precedence, validation, redaction, collection names
+- `test_database_connection.py`: lazy shared client, pool options, ping and health, close and reopen, error sanitising, thread-safe shared connection
+- `test_base_repository.py`: the interface, every CRUD operation, validation, error translation, concurrent use
+- `test_mongodb_check.py`: the connectivity script with a fake client, including failure and cleanup paths
+- `test_database_security.py`: git-ignore and no-credential guards, layer independence
+- `test_database_atlas_integration.py`: optional live tests

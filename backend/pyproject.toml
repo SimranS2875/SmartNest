@@ -11,6 +11,8 @@ requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "pydantic>=2.5",
+    "pymongo>=4.7",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -32,3 +34,6 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+markers = [
+    "atlas: needs a live MongoDB Atlas connection (skipped unless SMARTNEST_RUN_ATLAS_TESTS=1)",
+]
