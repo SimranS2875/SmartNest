@@ -84,6 +84,19 @@ export default function App() {
       setHealth(await api.health());
     });
   };
+  const searchMany = (categories: string[]) => {
+    if (!sid || categories.length === 0) return;
+    const left = health?.live_search?.remaining;
+    const ok = window.confirm(`Search the live shopping API for ${categories.length} categories? This uses ${categories.length} SerpApi requests${left != null ? ` (${left} left)` : ""}.`);
+    if (!ok) return;
+    void guarded(async () => {
+      for (const category of categories) {            // one at a time, so a failure stops the run and nothing more is spent
+        const r = await api.search(sid, category);
+        setSession(r.session);
+      }
+      setHealth(await api.health());
+    });
+  };
   const addToCart = (product_id: string) => event({ type: "cart_add", product_id });
   const newSession = () => guarded(async () => {
     const fresh = await api.createSession();
@@ -162,7 +175,7 @@ export default function App() {
           <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
             {tab === "plan" && (
               <PlanView rooms={session?.rooms ?? []} shortlist={session?.shortlist ?? []} busy={busy}
-                cartIds={cartIds} onAddToCart={addToCart} live={health?.live_search} onSearch={searchLive}
+                cartIds={cartIds} onAddToCart={addToCart} live={health?.live_search} onSearch={searchLive} onSearchMany={searchMany}
                 budgetNeeded={plan?.summary.budget_needed}
                 onRaiseBudget={(total_budget) => event({ type: "budget_change", total_budget })}
                 notes={plan?.data_notes ?? []} assumptions={plan?.assumptions ?? []}

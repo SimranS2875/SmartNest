@@ -80,7 +80,9 @@ class ProductResearchAgent:
         if task != "research":
             raise ValueError(f"unknown task {task!r}")
         profile = category(data["category"])
-        listings = self._catalog.listings(profile.id)
+        fetch = getattr(self._catalog, "listings_for", None)
+        listings = (fetch(profile.id, tuple(data.get("themes") or ())) if (fetch and profile.theme_sensitive)
+                    else self._catalog.listings(profile.id))
         child = data.get("audience") in ("child", "teen")
         kept, dropped = [], []
         for record in listings.records:

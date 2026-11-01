@@ -394,3 +394,79 @@ describe("an item that does not fit the budget", () => {
     expect(screen.getByRole("button", { name: /Remove Wardrobe/ })).toBeDisabled();
   });
 });
+
+
+import { PlanView } from "./components/PlanView";
+import type { RoomView } from "./types";
+
+describe("themes and live refresh controls", () => {
+  const live = { enabled: true, remaining: null, limit: null, used: 19 };
+  const plain = () => item({ category: "rug", category_label: "Rug", theme_unmatched: true, search_query: "princess barbie kids rug" });
+
+  it("says a generic pick is not themed and offers the themed search", async () => {
+    const user = userEvent.setup();
+    render(<ItemCard item={plain()} shortlist={[]} cartIds={[]} busy={false} live={live} {...noop} />);
+    expect(screen.getByTestId("theme-note")).toHaveTextContent("Not themed");
+    await user.click(screen.getByRole("button", { name: /Search live for “princess barbie kids rug” \(1 request\)/ }));
+    expect(noop.onSearch).toHaveBeenCalledWith("rug");
+  });
+
+  it("only describes the themed search when live search is off", () => {
+    render(<ItemCard item={plain()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: false }} {...noop} />);
+    expect(screen.getByTestId("theme-note")).toHaveTextContent("A themed search would be “princess barbie kids rug”");
+    expect(screen.queryByRole("button", { name: /Search live/ })).not.toBeInTheDocument();
+  });
+
+  it("shows no note for a themed or unthemed request", () => {
+    render(<ItemCard item={item({ theme_unmatched: false })} shortlist={[]} cartIds={[]} busy={false} live={live} {...noop} />);
+    expect(screen.queryByTestId("theme-note")).not.toBeInTheDocument();
+  });
+
+  it("lets you refresh any item's listings live, only when live search is on", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ItemCard item={item()} shortlist={[]} cartIds={[]} busy={false} live={live} {...noop} />);
+    await user.click(screen.getByRole("button", { name: "Why this?" }));
+    await user.click(screen.getByRole("button", { name: "Refresh Sofa listings" }));
+    expect(noop.onSearch).toHaveBeenCalledWith("sofa");
+    rerender(<ItemCard item={item()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: false }} {...noop} />);
+    expect(screen.queryByRole("button", { name: /Refresh/ })).not.toBeInTheDocument();
+  });
+
+  const room = (items: ReturnType<typeof item>[]): RoomView => ({ room_id: "r", label: "Kid's bedroom", spent: 0, allocated: 0, filled: 0, count: items.length, items });
+  const needy = [
+    item({ slot_id: "r.wall_decor", category: "wall_decor", category_label: "Wall decor", product: null, status: "unfilled", no_data: true }),
+    item({ slot_id: "r.rug", category: "rug", category_label: "Rug", theme_unmatched: true }),
+    item({ slot_id: "r.bed", category: "bed", category_label: "Bed" }),
+  ];
+  const props = { shortlist: [], cartIds: [], busy: false, notes: [], assumptions: [], ...noop };
+
+  it("offers one button for everything that needs a live search and passes the categories", async () => {
+    const user = userEvent.setup();
+    const many = vi.fn();
+    render(<PlanView rooms={[room(needy)]} live={live} onSearchMany={many} {...props} />);
+    expect(screen.getByTestId("search-many")).toHaveTextContent("2 items need a live search");
+    await user.click(screen.getByRole("button", { name: "Search live for all 2 (2 requests)" }));
+    expect(many).toHaveBeenCalledWith(["wall_decor", "rug"]);
+  });
+
+  it("has no banner for a single item, when nothing needs it, or when live search is off", () => {
+    const many = vi.fn();
+    const { rerender } = render(<PlanView rooms={[room(needy.slice(0, 1))]} live={live} onSearchMany={many} {...props} />);
+    expect(screen.queryByTestId("search-many")).not.toBeInTheDocument();
+    rerender(<PlanView rooms={[room(needy.slice(2))]} live={live} onSearchMany={many} {...props} />);
+    expect(screen.queryByTestId("search-many")).not.toBeInTheDocument();
+    rerender(<PlanView rooms={[room(needy)]} live={{ enabled: false }} onSearchMany={many} {...props} />);
+    expect(screen.queryByTestId("search-many")).not.toBeInTheDocument();
+  });
+
+  it("counts a category once even if several items need it", () => {
+    const twice = [...needy, item({ slot_id: "r2.rug", category: "rug", category_label: "Rug", theme_unmatched: true })];
+    render(<PlanView rooms={[room(twice)]} live={live} onSearchMany={vi.fn()} {...props} />);
+    expect(screen.getByTestId("search-many")).toHaveTextContent("2 items need");
+  });
+
+  it("disables the banner while busy", () => {
+    render(<PlanView rooms={[room(needy)]} live={live} onSearchMany={vi.fn()} {...props} busy />);
+    expect(screen.getByRole("button", { name: /Search live for all/ })).toBeDisabled();
+  });
+});
