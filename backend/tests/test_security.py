@@ -760,11 +760,21 @@ class TestIsolation:
                 if name.startswith("smartnest"):
                     assert name.startswith(allowed), (path.name, name)
 
+    #: The only module outside ``security`` that may use it: the furnishing agents' signed message bus (composition).
+    ALLOWED_USERS = {("furnishing", "activity.py")}
+
     def test_no_other_layer_depends_on_the_security_package(self):
         for path in self.ROOT.rglob("*.py"):
-            if "security" in path.relative_to(self.ROOT).parts:
+            parts = path.relative_to(self.ROOT).parts
+            if "security" in parts or parts in self.ALLOWED_USERS:
                 continue
             assert not any(n.startswith("smartnest.security") for n in self.imports(path)), path.name
+
+    def test_the_one_allowed_user_is_really_the_only_one(self):
+        users = {path.relative_to(self.ROOT).parts for path in self.ROOT.rglob("*.py")
+                 if "security" not in path.relative_to(self.ROOT).parts
+                 and any(n.startswith("smartnest.security") for n in self.imports(path))}
+        assert users == self.ALLOWED_USERS
 
     def test_the_security_layer_never_uses_non_cryptographic_randomness_or_weak_hashes(self):
         for path in (self.ROOT / "security").glob("*.py"):

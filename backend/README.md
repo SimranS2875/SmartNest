@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-1906 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2148 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 242 for the furnishing layer, chat, API and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -973,3 +973,89 @@ Handlers ran only for messages from trusted senders; nothing from the attacker r
 - The registry is trust-on-configuration: SmartNest authenticates agents whose public keys an operator has registered; it does not solve first-contact key distribution.
 - Not applied to the CNP negotiation traffic or the 2.2 demos yet (they are untouched, byte-identical output): the secure router can wrap any of their routers when that is wanted.
 - Replay protection assumes clocks agree within the skew; the seen-id window is per process (restarting the receiver forgets it, but the freshness window still bounds replay).
+
+
+---
+
+## SmartNest Application: Whole-Home Furnishing (Furnishing Layer, API, Interface)
+
+The earlier assignments built one decision at a time (a sofa). This layer turns them into the product: *"I just moved
+into a 2BHK apartment. My furnishing budget is ₹2 lakh. I prefer minimalist furniture. Help me furnish the entire
+apartment."* The existing optimizer, validators, security and persistence are reused unchanged; the BDI single-item agent
+remains for single-item flows. The architecture diagram is [docs/architecture.svg](../docs/architecture.svg).
+
+### Layers
+
+| Layer | Where | What it does |
+|---|---|---|
+| Interface | `../frontend` (React, Tailwind, Recharts) | Chat, room-wise plan, budget dashboard, compare + shortlist, agent monitor |
+| API | `smartnest/api` (FastAPI) | Validation, sessions, chat, events, views; no business logic |
+| Chat | `furnishing/intent.py`, `assistant.py` | Rule-based parsing (₹, lakh, BHK, rooms, commands); Gemini only as fallback and rewording |
+| Agents | `furnishing/agents.py`, `coordinator.py` | Space Planning, Product Research, Comparison, Budget, Coordinator |
+| Messaging | `furnishing/activity.py` | Every agent request/reply is an Ed25519-signed `MessageEnvelope` through `SecureMessageRouter` |
+| Data | `furnishing/catalog.py` | Real SerpApi snapshots; labelled simulated samples only as a fallback |
+
+### The agents
+* **Space Planning** expands "2BHK" into living room, bedrooms and kitchen and the items each needs; room dimensions are
+  optional (none are invented) and its assumptions are listed in the plan.
+* **Product Research** serves a category's listings and drops accessories (a ₹499 "refrigerator" is a magnet) with the
+  reason recorded.
+* **Comparison** runs the existing `UtilityOptimizer` per item: hard limits, dynamic weights, confirmed vs unverified.
+* **Budget** splits the budget into **hard per-item ceilings** (they sum to the budget), re-shares leftovers, and
+  produces the analytics. If an even split leaves every open item just short, the whole remainder is offered to open
+  items one at a time, so money is not wasted.
+* **Coordinator** holds the plan-level BDI state (beliefs in the same `BeliefBase`, desire "furnish everything inside the
+  budget", one intention per item) and re-plans on events. Each item's intention is `retained`, `replaced` or
+  `invalidated`, with an explanation (`transitions`).
+
+Events: out of stock, price change, budget change, preference change, remove item, choose product (the user's own pick:
+accepted only if the optimizer still accepts it and the total stays inside the budget, otherwise refused with a reason).
+
+### Honesty rules (tested)
+* A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
+  budget). Missing ratings, sizes, styles and colours stay missing and are listed as "not stated".
+* Item budgets are hard ceilings; the plan can never exceed the total. An item that cannot be filled is explained, and no
+  constraint is relaxed to force it.
+* Simulated listings are labelled "Sample data", have no purchase link and no image. A Google Shopping page is never called
+  a retailer link.
+* Gemini never selects a product, price or budget. Its rewording is discarded if it adds a number or drops a caution.
+
+### Real data and the SerpApi quota
+`python src/capture_catalog.py --plan` shows what would be spent. The seven categories (sofa, TV unit, bed, mattress,
+wardrobe, dining table, refrigerator) were captured with the project's whole 10-request allowance (the sofa from the
+earlier cache, 6 fresh one-request searches, details only for the sofa), cached in Atlas, and saved to
+`backend/data/catalog/*.json` (git-ignored: third-party data). **The running application makes no SerpApi request**;
+the quota is exhausted (10/10) and the local ledger refuses more. Listings captured without a details lookup link to the
+Google Shopping product page (labelled); only the three sofas with details have direct retailer links and stock evidence.
+
+### Run it
+```
+pip install -e .                               # backend (adds fastapi, uvicorn)
+python src/serve.py                            # API on http://127.0.0.1:8000   (--atlas persists sessions in MongoDB)
+cd ../frontend && npm install && npm run dev   # UI on http://localhost:5173 (proxies /api to the backend)
+python src/furnishing_run.py                   # terminal demo of the agents, the plan and replanning
+```
+Settings (environment): `SMARTNEST_ALLOW_SIMULATED=auto|0|1` (auto: only when no real snapshot exists),
+`SMARTNEST_USE_GEMINI=auto|0|1`, `SMARTNEST_USE_ATLAS=0|1`, `SMARTNEST_CATALOG_DIR`, `SMARTNEST_CORS_ORIGINS`.
+Sessions are stored as `{request, events}` and rebuilt by replay (planning is deterministic), so a restart loses nothing.
+
+### Testing
+* `pytest` (backend): furnishing layer, chat, API (validation, persistence, rate limit, CORS, no secrets) and
+  `test_e2e_real_catalog.py` (the demo scenario on the real snapshots; every recommended product must exist in the
+  snapshot with unaltered name, price, seller and link; skipped if no snapshots).
+* `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
+  chat panel, budget view, API client errors.
+* `node e2e/demo.mjs` (frontend, Playwright against the running stack): 17 checks from the demo message to the agent
+  monitor, a page reload and the mobile layout.
+* `node e2e/record-demo.mjs` records the ~3 minute captioned demo to `docs/demo/smartnest-demo.webm`;
+  the narration is in [docs/DEMO_SCRIPT.md](../docs/DEMO_SCRIPT.md).
+
+### Known limits
+* Real Google Shopping data states little: ratings on about 15% of results; no sizes, styles or colours. Ranking therefore
+  rests mostly on price (and rating where present), so the cheapest valid option usually wins and a large budget is
+  mostly left unspent; the user can upgrade any item from its alternatives. A style preference only matters where a
+  listing states a style.
+* Both bedrooms get the same top product (matching furniture, counted twice).
+* The agents run in one process over the signed router; moving one to another host needs only a `RemoteAgentServer`
+  and a `SecureChannel`. Signatures give authenticity and integrity, not encryption.
+* CNP (Assignment 3.1) traffic is still unsigned.

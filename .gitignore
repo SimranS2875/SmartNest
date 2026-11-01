@@ -37,3 +37,5 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 frontend/e2e/shots/
+docs/demo/*.webm
+frontend/e2e/_video/
