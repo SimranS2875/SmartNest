@@ -73,6 +73,10 @@ class SerpApiResponseError(SerpApiError):
     """The response was not the JSON object that was expected."""
 
 
+#: The limit used when no cap is configured: far beyond any real use, so the ledger only counts.
+UNCAPPED = 10 ** 9
+
+
 class UsageLedger:
     """A persistent, hard cap on the number of SerpApi requests this checkout may ever make.
 
@@ -116,8 +120,8 @@ class SerpApiClient:
     def __init__(self, settings: SerpApiSettings, *, transport: httpx.BaseTransport | None = None) -> None:
         self._settings = settings
         self._transport = transport
-        self.ledger = (UsageLedger(settings.usage_file, settings.lifetime_limit)
-                       if settings.lifetime_limit is not None else None)
+        # Without a cap the ledger still COUNTS (so "requests used" stays true); its limit is just unreachable.
+        self.ledger = UsageLedger(settings.usage_file, settings.lifetime_limit if settings.lifetime_limit is not None else UNCAPPED)
         self.calls = 0  # number of HTTP requests made (each may cost one SerpApi search)
 
     # ── Public operations ────────────────────────────────────────────────

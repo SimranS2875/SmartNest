@@ -10,7 +10,8 @@ cost extra requests, so listings captured here link to the Google Shopping produ
 as such - it never calls a Google page a retailer link.
 
 Safety:
-  * the lifetime cap (``SERPAPI_LIFETIME_LIMIT`` in backend/.env) must be loaded, or the script refuses to run;
+  * the lifetime cap (``SERPAPI_LIFETIME_LIMIT`` in backend/.env) must be loaded, or the script refuses to run
+    (``unlimited`` removes the cap on purpose; ``--spend`` still limits each run);
   * ``--spend N`` is an additional per-run cap;
   * raw responses are cached in MongoDB Atlas (``--atlas``) and parsed listings are saved to ``backend/data/catalog``
     (git-ignored), so nothing is ever searched twice;
@@ -91,19 +92,23 @@ def main() -> int:
     except SerpApiConfigError as exc:
         print(f"SerpApi is not configured: {exc}")
         return 2
-    if settings.lifetime_limit is None:
-        print("REFUSING TO RUN: SERPAPI_LIFETIME_LIMIT is not loaded, so the quota cap would not be enforced.")
+    if settings.lifetime_limit is None and not settings.uncapped:
+        print("REFUSING TO RUN: SERPAPI_LIFETIME_LIMIT is not loaded, so the quota cap would not be enforced.\n"
+              "(To remove the cap on purpose, set SERPAPI_LIFETIME_LIMIT=unlimited in backend/.env.)")
         return 2
     ledger = UsageLedger(settings.usage_file, 10 ** 9)
-    remaining = settings.lifetime_limit - ledger.used
+    remaining = None if settings.lifetime_limit is None else settings.lifetime_limit - ledger.used
     snaps = SnapshotCatalog()
     wanted = [c for c in (args.only or QUERIES) if args.force or not snaps.listings(c).records]
-    print(f"Lifetime cap {settings.lifetime_limit}, used {ledger.used}, remaining {remaining}")
+    if remaining is None:
+        print(f"Lifetime cap: none (removed on purpose), used {ledger.used}. This run is still limited by --spend.")
+    else:
+        print(f"Lifetime cap {settings.lifetime_limit}, used {ledger.used}, remaining {remaining}")
     print(f"Snapshot directory: {snaps.directory}")
     for c in QUERIES:
         state = "has a snapshot" if snaps.listings(c).records else "needs capture"
         print(f"  {c:13s} query={QUERIES[c]!r:36s} {state}{'  <- will search' if c in wanted else ''}")
-    budget = min(args.spend, remaining)
+    budget = args.spend if remaining is None else min(args.spend, remaining)
     print(f"Planned spend: {len(wanted)} request(s); this run may spend {budget}.")
     if args.plan:
         return 0
@@ -150,7 +155,8 @@ def main() -> int:
     finally:
         if connection is not None:
             connection.close()
-    print(f"Lifetime used now: {UsageLedger(settings.usage_file, 10 ** 9).used} of {settings.lifetime_limit}")
+    print(f"Lifetime used now: {UsageLedger(settings.usage_file, 10 ** 9).used} of "
+          f"{settings.lifetime_limit if settings.lifetime_limit is not None else 'unlimited'}")
     return code
 
 
