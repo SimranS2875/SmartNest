@@ -31,6 +31,7 @@ from typing import Any
 from smartnest.bdi.beliefs import BeliefBase
 from smartnest.furnishing.activity import ActivityLog, AgentBus, AgentCallError
 from smartnest.furnishing.agents import BudgetAgent, ComparisonAgent, ProductResearchAgent, SpacePlanningAgent
+from smartnest.furnishing.money import inr
 from smartnest.furnishing.catalog import ORIGIN_REAL, ORIGIN_SIMULATED, ProductCatalog
 from smartnest.furnishing.rooms import Slot
 
@@ -129,6 +130,8 @@ class FurnishingCoordinator:
         self._research: dict[str, dict[str, Any]] = {}
         self._overrides: dict[str, dict[str, Any]] = {}
         self._removed: set[str] = set()
+        self._choices: dict[str, str] = {}            # slot id -> product id the USER picked
+        self._refused_choice: dict[str, str] = {}     # slot id -> why the user's pick could not be honoured
         self._assumptions: list[str] = []
         self._rooms: list[dict] = []
 
@@ -195,9 +198,40 @@ class FurnishingCoordinator:
                 raise PlanError(f"unknown item {slot_id!r}")
             self._removed.add(slot_id)
             self.log.record(COORD, "replan", f"user removed {slot_id} from the plan", details=event)
+        elif kind in ("choose_product", "clear_choice"):
+            return self._handle_choice(event, previous)
         else:
             raise PlanError(f"unknown event type {kind!r}")
         self.plan = self._solve(previous=previous)
+        return self.plan
+
+    def _handle_choice(self, event: dict[str, Any], previous: dict[str, dict[str, Any]]) -> Plan:
+        slot_id = event.get("slot_id")
+        slot = next((s for s in self._slots if s.slot_id == slot_id and s.slot_id not in self._removed), None)
+        if slot is None:
+            raise PlanError(f"unknown item {slot_id!r}")
+        if event["type"] == "clear_choice":
+            self._choices.pop(slot_id, None)
+            self.log.record(COORD, "replan", f"user released their choice for {slot.label}", details=event)
+        else:
+            pid = event.get("product_id")
+            if pid not in {r["product_id"] for r in self._research[slot.profile.id]["records"]}:
+                raise PlanError(f"{pid!r} is not a {slot.profile.label.lower()} SmartNest has found")
+            old = self._choices.get(slot_id)
+            self._choices[slot_id] = pid
+            self._refused_choice.pop(slot_id, None)
+            self.log.record(COORD, "replan", f"user chose {pid} for {slot.label}", details=event)
+        candidate = self._solve(previous=previous)
+        if slot_id in self._refused_choice:                      # the pick is not valid: keep the plan as it was
+            reason = self._refused_choice.pop(slot_id)
+            if event["type"] == "choose_product":
+                if old is None:
+                    self._choices.pop(slot_id, None)
+                else:
+                    self._choices[slot_id] = old
+            self.log.record(COORD, "warning", f"choice refused: {reason}")
+            raise PlanError(reason)
+        self.plan = candidate
         return self.plan
 
     def toggle_shortlist(self, product_id: str) -> list[str]:
@@ -277,6 +311,8 @@ class FurnishingCoordinator:
                 summary="asked Budget to share unspent money with unfilled items")["ceilings"])
             self.log.record("budget", "decision", f"{len(open_ids)} item(s) unfilled; re-sharing the leftover budget")
 
+        self._apply_choices(slots, results, budget)
+
         lines: dict[str, dict[str, Any]] = {}
         prices: dict[str, float] = {}
         for slot in slots:
@@ -290,11 +326,11 @@ class FurnishingCoordinator:
                     "rejected_examples": res.get("rejected_examples", [])}
             if sel is None:
                 line.update(status="unfilled", product=None, utility=None, completeness=None, alternatives=[],
-                            why=(f"No {slot.profile.label.lower()} could be chosen within Rs {ceilings[slot.slot_id]:,.0f}"
+                            why=(f"No {slot.profile.label.lower()} could be chosen within {inr(ceilings[slot.slot_id])}"
                                  f" from {res.get('inspected', 0)} listing(s); nothing was relaxed to force a match."))
             else:
                 prices[slot.slot_id] = float(sel["price"])
-                line.update(status=sel["state"], product=_product_view(sel), utility=sel["utility"],
+                line.update(status=sel["state"], user_choice=bool(res.get("user_choice")), product=_product_view(sel), utility=sel["utility"],
                             completeness=sel["completeness"], unavailable=sel["unavailable"], gaps=sel["gaps"],
                             fit=sel["fit"], components=sel["components"], weights=sel["weights"],
                             contributions=sel["contributions"],
@@ -316,10 +352,40 @@ class FurnishingCoordinator:
         version = (self.plan.version + 1) if self.plan else 1
         return Plan(req, self._assumptions, self._rooms, lines, summary, notes, version)
 
+    def _apply_choices(self, slots: list[Slot], results: dict[str, dict[str, Any]], budget: float) -> None:
+        """Let the user's own picks replace the automatic ones - only if the optimizer still accepts them and the
+        plan stays inside the total budget.  A refused pick is reported, never silently bent."""
+        by_id = {s.slot_id: s for s in slots}
+        for slot_id, pid in list(self._choices.items()):
+            slot = by_id.get(slot_id)
+            if slot is None:
+                continue
+            record = next((r for r in self._research[slot.profile.id]["records"] if r["product_id"] == pid), None)
+            others = sum(r["selected"]["price"] for sid, r in results.items() if sid != slot_id and r.get("selected"))
+            room = round(budget - others, 2)
+            current = results.get(slot_id) or {"options": []}
+            res = self.bus.call("comparison", "compare", {
+                "slot": slot.to_dict(), "ceiling": room, "records": [record] if record else [],
+                "style": self._request.style, "colour": self._request.colour, "overrides": self._overrides},
+                summary=f"asked Comparison to validate the user's choice for {slot.label} (room left Rs {room:,.0f})")
+            if res["selected"] is None:
+                why = (res.get("rejected_examples") or [{}])[0].get("reasons") or ["it is not valid"]
+                self._refused_choice[slot_id] = (f"that product cannot be bought for {slot.label}: {why[0]}"
+                                                 if room > 0 else "there is no budget left for it")
+                continue
+            chosen = res["selected"]
+            alternatives = [o for o in current.get("options", []) if o["product_id"] != pid]
+            results[slot_id] = dict(current, selected=chosen, user_choice=True, options=[chosen, *alternatives],
+                                    inspected=current.get("inspected", res["inspected"]), ceiling=room)
+
     @staticmethod
     def _why(slot: Slot, sel: dict[str, Any], res: dict[str, Any]) -> str:
+        if res.get("user_choice"):
+            return (f"Chosen by you. SmartNest checked it: utility {sel['utility']:.1f}/100, "
+                    f"price {inr(sel['price'])} fits the remaining budget."
+                    + (" Stock is not confirmed - check the retailer before buying." if sel["state"] == "unverified" else ""))
         sentence = (f"Highest utility ({sel['utility']:.1f}/100) among {res['inspected']} {slot.profile.label.lower()} "
-                    f"listing(s) priced within Rs {res['ceiling']:,.0f}.")
+                    f"listing(s) priced within {inr(res['ceiling'])}.")
         if sel["unavailable"]:
             sentence += f" Not stated by the listing, so not scored: {', '.join(sel['unavailable'])}."
         if sel["state"] == "unverified":

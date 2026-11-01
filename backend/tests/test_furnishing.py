@@ -399,3 +399,69 @@ class TestReplanning:
         assert c.toggle_shortlist(pid) == []
         with pytest.raises(PlanError):
             c.toggle_shortlist("nope")
+
+
+class TestUserChoices:
+    def pricey(self, c, category):
+        return max(c._research[category]["records"], key=lambda r: r["price"])
+
+    def test_user_choice_replaces_the_automatic_pick(self):
+        c, plan = planned()
+        cheapest = plan.lines["living_room.sofa"]["product"]["product_id"]
+        alt = plan.lines["living_room.sofa"]["alternatives"][0]
+        new = c.handle_event({"type": "choose_product", "slot_id": "living_room.sofa", "product_id": alt["product_id"]})
+        line = new.lines["living_room.sofa"]
+        assert line["product"]["product_id"] == alt["product_id"] != cheapest
+        assert line["user_choice"] and line["why"].startswith("Chosen by you")
+        assert new.summary["within_budget"]
+
+    def test_choice_that_would_break_the_total_budget_is_refused_and_the_plan_unchanged(self):
+        c, plan = planned(100000, 1)
+        sofa = plan.lines["living_room.sofa"]
+        assert sofa["product"] is not None
+        record = self.pricey(c, "sofa")
+        room = 100000 - (plan.summary["spent"] - sofa["product"]["price"])
+        assert record["price"] > room                     # precondition: this pick cannot fit
+        before = plan.summary["spent"]
+        with pytest.raises(PlanError):
+            c.handle_event({"type": "choose_product", "slot_id": "living_room.sofa",
+                            "product_id": record["product_id"]})
+        assert c.plan is plan and c.plan.summary["spent"] == before and c._choices == {}
+
+    def test_choice_cannot_use_a_product_from_another_category(self):
+        c, _ = planned()
+        wardrobe = c._research["wardrobe"]["records"][0]["product_id"]
+        with pytest.raises(PlanError):
+            c.handle_event({"type": "choose_product", "slot_id": "living_room.sofa", "product_id": wardrobe})
+
+    def test_choice_of_out_of_stock_product_is_refused(self):
+        c, _ = planned()
+        pid = c._research["sofa"]["records"][3]["product_id"]
+        c.handle_event({"type": "out_of_stock", "product_id": pid})
+        with pytest.raises(PlanError):
+            c.handle_event({"type": "choose_product", "slot_id": "living_room.sofa", "product_id": pid})
+
+    def test_clear_choice_goes_back_to_the_automatic_pick(self):
+        c, plan = planned()
+        auto = plan.lines["living_room.sofa"]["product"]["product_id"]
+        alt = plan.lines["living_room.sofa"]["alternatives"][0]["product_id"]
+        c.handle_event({"type": "choose_product", "slot_id": "living_room.sofa", "product_id": alt})
+        back = c.handle_event({"type": "clear_choice", "slot_id": "living_room.sofa"})
+        assert back.lines["living_room.sofa"]["product"]["product_id"] == auto
+        assert not back.lines["living_room.sofa"]["user_choice"]
+
+    def test_many_choices_never_exceed_the_budget(self):
+        c, plan = planned(120000, 2)
+        for slot_id, line in plan.lines.items():
+            if line["alternatives"]:
+                best = max(line["alternatives"], key=lambda a: a["price"])
+                try:
+                    c.handle_event({"type": "choose_product", "slot_id": slot_id, "product_id": best["product_id"]})
+                except PlanError:
+                    pass
+                assert c.plan.summary["spent"] <= 120000 + 1e-6
+
+    def test_unknown_slot(self):
+        c, _ = planned()
+        with pytest.raises(PlanError):
+            c.handle_event({"type": "choose_product", "slot_id": "nowhere.sofa", "product_id": "x"})
