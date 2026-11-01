@@ -136,8 +136,6 @@ export default function App() {
               : origins.length > 0 && <Badge tone="bad" title="No real snapshots found; listings are invented samples">Sample data only</Badge>}
             {health && <Badge tone={health.gemini ? "brand" : "neutral"}>{health.gemini ? "Gemini on" : "Gemini off"}</Badge>}
             {health && <Badge>{health.persistence === "mongodb" ? "MongoDB" : "In-memory"}</Badge>}
-            {health?.serpapi_quota && <Badge title="SerpApi requests used / local cap. The app makes none while running.">
-              SerpApi {health.serpapi_quota.used}/{health.serpapi_quota.limit ?? "∞"}</Badge>}
             <Button onClick={newSession} disabled={busy}>New plan</Button>
             <ThemeToggle />
           </div>

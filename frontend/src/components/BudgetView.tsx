@@ -18,7 +18,7 @@ export function BudgetView({ budget }: { budget: Budget | null }) {
         <Stat label="Planned spend" value={inr(budget.spent)} hint={`${percent(budget.utilisation)} of budget`} tone={over ? "bad" : undefined} />
         <Stat label="Remaining" value={inr(budget.remaining)} tone={over ? "bad" : "ok"} />
         <Stat label="Items" value={`${budget.counts.confirmed + budget.counts.unverified}/${budget.items.length}`}
-          hint={`${budget.counts.confirmed} confirmed · ${budget.counts.unverified} unverified · ${budget.counts.unfilled} unfilled`} />
+          hint={`${budget.counts.unfilled} unfilled`} />
       </div>
 
       <div className="h-3 overflow-hidden rounded-full bg-track" role="meter" aria-label="Budget used"
@@ -92,7 +92,7 @@ export function BudgetView({ budget }: { budget: Budget | null }) {
                 <td className="px-4 py-2">{row.label}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">{inr(row.ceiling)}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{inr(row.price)}</td>
-                <td className="px-4 py-2"><Badge tone={row.status === "confirmed" ? "ok" : row.status === "unverified" ? "warn" : "bad"}>{row.status}</Badge></td>
+                <td className="px-4 py-2">{row.status === "unfilled" ? <Badge tone="bad">unfilled</Badge> : <span className="text-muted">Picked</span>}</td>
               </tr>
             ))}
           </tbody>

@@ -68,7 +68,7 @@ await page.getByRole("button", { name: "Add all plan picks" }).click();
 await page.waitForFunction(() => document.querySelectorAll("[data-testid^=cart-]").length >= 7);
 const total = await page.locator("text=Cart total").locator("xpath=following-sibling::div").first().innerText();
 check("add-all fills the cart within budget", (await page.getByText("over the current budget").count()) === 0, `total ${total}`);
-check("cart never claims confirmed without evidence", (await page.getByText("Stock unverified", { selector: "span" }).count()) > 0);
+check("cart never claims confirmed without evidence", (await page.getByText("Confirmed in stock", { selector: "span" }).count()) === 0);
 await page.screenshot({ path: `${out}/03b-cart.png`, fullPage: true });
 await page.getByRole("button", { name: "Clear cart" }).click();
 await page.getByText("Your cart is empty").first().waitFor();

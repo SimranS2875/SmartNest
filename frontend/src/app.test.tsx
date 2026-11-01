@@ -60,9 +60,9 @@ describe("ItemCard", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
-  it("labels unverified stock and never calls it confirmed", () => {
+  it("shows no stock badge for unverified stock and never calls it confirmed", () => {
     render(<ItemCard item={item({ status: "unverified" })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
-    expect(screen.getByText("Stock unverified")).toBeInTheDocument();
+    expect(screen.queryByText("Stock unverified")).not.toBeInTheDocument();
     expect(screen.queryByText("Confirmed in stock")).not.toBeInTheDocument();
   });
 
@@ -259,7 +259,7 @@ describe("CartView", () => {
   it("shows lines, totals and honest stock labels", () => {
     render(<CartView cart={cartOf()} busy={false} {...cartActions} />);
     expect(screen.getAllByText("₹37,256").length).toBeGreaterThan(0);
-    expect(screen.getByText("Stock unverified", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByText("Stock unverified")).not.toBeInTheDocument();
     expect(screen.queryByText("Confirmed in stock")).not.toBeInTheDocument();
     expect(screen.getByRole("meter", { name: "Cart against budget" })).toHaveAttribute("aria-valuenow", "19");
     expect(screen.getByText(/does not sell anything/)).toBeInTheDocument();
