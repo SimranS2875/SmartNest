@@ -174,7 +174,7 @@ class SimulatedCatalog:
             built.record.update({"data_origin": ORIGIN_SIMULATED, "discovery_method": "simulated_sample"})
             records.append(built.record)
         return CategoryListings(category_id, records, ORIGIN_SIMULATED, self._at.isoformat(),
-                                query=CATEGORIES[category_id].search_term, rejected=rejected,
+                                query=category(category_id).search_term, rejected=rejected,
                                 notes=["SIMULATED sample listings - not real products"])
 
 

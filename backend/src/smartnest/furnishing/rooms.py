@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from smartnest.furnishing.categories import CATEGORIES, CategoryProfile
+from smartnest.furnishing.categories import CategoryProfile, category
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ class Slot:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Slot":
-        return cls(d["slot_id"], d["room_id"], d["room_label"], CATEGORIES[d["category"]],
+        return cls(d["slot_id"], d["room_id"], d["room_label"], category(d["category"]),
                    int(d.get("min_seating") or 1), d.get("max_width_cm"), d.get("max_depth_cm"))
 
 
@@ -83,6 +83,14 @@ def rooms_for_scope(scope: tuple[str, ...] | list[str], dimensions: dict[str, di
     return out
 
 
+def rooms_for_items(items: tuple[str, ...] | list[str], label: str = "Shopping list") -> list[Room]:
+    """One pseudo-room holding exactly the things the user asked for (no home or room template involved)."""
+    unique = tuple(dict.fromkeys(items))
+    if not unique:
+        raise ValueError("no items were given")
+    return [Room("shopping_list", label, unique)]
+
+
 def _bedroom(n: int) -> Room:
     return Room(f"bedroom_{n}", f"Bedroom {n}", ("bed", "mattress", "wardrobe"))
 
@@ -114,7 +122,7 @@ def slots_for(rooms: list[Room]) -> list[Slot]:
     slots = []
     for room in rooms:
         for cat in room.categories:
-            profile = CATEGORIES[cat]
+            profile = category(cat)
             slots.append(Slot(f"{room.room_id}.{cat}", room.room_id, room.label, profile,
                               min_seating=3 if cat == "sofa" else (4 if cat == "dining_table" else 1),
                               max_width_cm=room.width_cm, max_depth_cm=room.depth_cm))

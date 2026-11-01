@@ -68,7 +68,7 @@ class SessionRegistry:
                 "style": session.request.style, "colour": session.request.colour,
                 "room_dimensions": session.request.room_dimensions, "scope": list(session.request.scope),
                 "audience": session.request.audience, "age": session.request.age,
-                "themes": list(session.request.themes)},
+                "themes": list(session.request.themes), "items": list(session.request.items)},
             "events": session.events, "shortlist": session.coordinator.shortlist, "history": session.history[-100:],
             "draft": session.draft, "created_at": session.created_at,
         }
@@ -97,7 +97,7 @@ class SessionRegistry:
                 session.start(FurnishingRequest(
                     req["total_budget"], req.get("bedrooms"), req.get("style"), req.get("colour"),
                     req.get("room_dimensions"), tuple(req.get("scope") or ()), req.get("audience"), req.get("age"),
-                    tuple(req.get("themes") or ())))
+                    tuple(req.get("themes") or ()), tuple(req.get("items") or ())))
                 for event in doc.get("events") or []:
                     session.apply(event)
                 for pid in doc.get("shortlist") or []:

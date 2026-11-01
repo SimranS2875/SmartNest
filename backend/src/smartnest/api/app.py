@@ -63,6 +63,7 @@ class CreateSession(BaseModel):
     audience: Literal["child", "teen", "adult"] | None = None
     age: int | None = Field(default=None, ge=0, le=99)
     themes: list[str] = Field(default_factory=list, max_length=8)
+    items: list[str] = Field(default_factory=list, max_length=12)       # category ids or plain names ("bed", "telescope")
     style: str | None = Field(default=None, max_length=40)
     colour: str | None = Field(default=None, max_length=40)
 
@@ -273,11 +274,15 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
     def create_session(body: CreateSession) -> dict[str, Any]:
         session = registry.create()
         with session.lock:
-            if body.total_budget is not None and (body.bedrooms is not None or body.scope):
+            if body.total_budget is not None and (body.bedrooms is not None or body.scope or body.items):
+                from smartnest.furnishing.naming import resolve_names
+                items = tuple(resolve_names(body.items))
+                if body.items and not items:
+                    raise PlanError("none of the items could be understood as things to buy")
                 session.start(FurnishingRequest(
                     body.total_budget, body.bedrooms, body.style.strip().lower() if body.style else None,
                     body.colour.strip().lower() if body.colour else None, None, tuple(body.scope), body.audience,
-                    body.age, tuple(t.strip().lower() for t in body.themes)))
+                    body.age, tuple(t.strip().lower() for t in body.themes), items))
                 session.say("assistant", assistant.describe_plan(session.plan, intro=True), "new_request")
             elif body.message:
                 assistant.respond(session, body.message)

@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2365 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 459 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2501 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 595 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1083,6 +1083,33 @@ A sun/moon button in the header switches between a light and a dark theme (`fron
   chart labels) on all five tabs in both themes. It found a real light-mode defect (the green "ok" badge was 4.47:1) which is
   fixed; every tab now passes 4.5:1 (3:1 for large text) in both themes.
 
+### Categories from names (any item, not a fixed list)
+The 16 curated categories carry knowledge (search phrase, price range, accessory words, budget weight) and saved real data.
+They are no longer the only things SmartNest can plan for. When a request names things to buy ("a telescope and a bed, budget
+40000"), **Gemini is asked for category NAMES only** (`bed`, `telescope`...), never prices, links, ranges or brands. Everything
+else comes from the shopping search (SerpApi) or, where there is no data yet, an honest "No listings yet".
+* `naming.py` is the gate between names and the planner. A name maps to a **curated** category only if its extra words are plain
+  modifiers ("queen size bed" is a `bed`, "3 door wardrobe" a `wardrobe`, "couch" a `sofa`); anything else ("standing desk",
+  "gaming chair", "telescope") becomes its **own** category, so it is searched for by name instead of being squeezed into the
+  nearest curated one. "bed and wardrobe" is split.
+* **Model output is screened like any input:** short noun phrases only (up to 4 words, 40 characters), instruction-like words
+  blocked (`ignore`, `reveal`, `prompt`, `password`, URLs, scripts...), validated as a whole before splitting (`../../etc/passwd`
+  is not two items), at most 12 items, and the valid ones are kept next to the refused ones.
+* A new category's id is a strict slug (`x_<=4 words>`, only `[a-z0-9_]`) because it becomes a snapshot file name and a search
+  phrase sent to a paid API; anything else is refused (`categories.category()` raises).
+* **No curated knowledge, so no made-up knowledge:** a custom category has no price range of its own. Its price floor is taken
+  from the search results themselves (a listing under 25% of the median, with at least 5 results, is dropped as a likely
+  accessory, with the reason recorded). A word that is part of the name ("toy" in "toys") is not treated as an accessory marker.
+* When rules can already read the request (a home or room with a budget) Gemini is not called at all. For a list of items it
+  always is, because rules only know the curated words; Gemini's list then replaces the rules' word-spotting, and the rules' list
+  is the fallback if Gemini is down or offers nothing.
+* A custom item with no data is a plan line like any other: no budget share, "Search live" (quota-gated, one request, the search
+  phrase is the name). An item list can also be added **on top of** a room or home ("2BHK" plus "a telescope" goes in an
+  "Extras" room; items the template already has are not duplicated). The list is stored with the session, so it replays exactly.
+* Chat understands custom items already in the plan ("why this telescope?", "I don't need a telescope").
+* Gemini rewording of replies must now keep **every** number of the rule-based text (it already could not add any), so a budget
+  or shortfall figure cannot silently vanish.
+
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
   budget). Missing ratings, sizes, styles and colours stay missing and are listed as "not stated".
@@ -1128,7 +1155,7 @@ Sessions are stored as `{request, events}` and rebuilt by replay (planning is de
   snapshot with unaltered name, price, seller and link; skipped if no snapshots).
 * `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
   chat panel, budget view, API client errors.
-* `node e2e/dark-mode.mjs` (theme toggle, persistence, contrast audit), `node e2e/tight-budget.mjs` (a budget too small
+* `node e2e/items.mjs` (a request for things incl. an unknown one, needs the Gemini key), `node e2e/dark-mode.mjs` (theme toggle, persistence, contrast audit), `node e2e/tight-budget.mjs` (a budget too small
   for everything) and `node e2e/kids-room.mjs` (a child's bedroom with themes, a vague first message, a bare-number answer) and
   `node e2e/demo.mjs` (frontend, Playwright against the running stack): 13 and 23 checks from the demo message to the agent
   monitor, a page reload and the mobile layout.
