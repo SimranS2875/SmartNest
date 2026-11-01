@@ -105,3 +105,19 @@ class TestCaptureScriptGuard:
     def test_runs_with_a_number(self, monkeypatch, capsys, tmp_path):
         code, out = self.run(monkeypatch, capsys, SerpApiSettings(api_key=KEY, usage_file=tmp_path / "u.json", lifetime_limit=50))
         assert code == 0 and "Lifetime cap 50" in out
+
+
+class TestTestsNeverTouchTheRealLedger:
+    def test_a_client_built_from_default_settings_does_not_write_the_real_usage_file(self):
+        default = SerpApiSettings(api_key=KEY).usage_file
+        before = default.read_bytes() if default.exists() else None
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(1)
+            return httpx.Response(200, json={"shopping_results": []})
+        client = SerpApiClient(SerpApiSettings(api_key=KEY), transport=httpx.MockTransport(handler))
+        for i in range(3):
+            client.search(f"q{i}")
+        after = default.read_bytes() if default.exists() else None
+        assert len(seen) == 3 and client.ledger is None and after == before

@@ -120,8 +120,14 @@ class SerpApiClient:
     def __init__(self, settings: SerpApiSettings, *, transport: httpx.BaseTransport | None = None) -> None:
         self._settings = settings
         self._transport = transport
-        # Without a cap the ledger still COUNTS (so "requests used" stays true); its limit is just unreachable.
-        self.ledger = UsageLedger(settings.usage_file, settings.lifetime_limit if settings.lifetime_limit is not None else UNCAPPED)
+        # A configured cap enforces and counts.  A cap removed ON PURPOSE (``unlimited``) still counts, so "requests used"
+        # stays true; its limit is just unreachable.  Plain default settings (nothing configured, e.g. in tests) touch no file.
+        if settings.lifetime_limit is not None:
+            self.ledger = UsageLedger(settings.usage_file, settings.lifetime_limit)
+        elif settings.uncapped:
+            self.ledger = UsageLedger(settings.usage_file, UNCAPPED)
+        else:
+            self.ledger = None
         self.calls = 0  # number of HTTP requests made (each may cost one SerpApi search)
 
     # ── Public operations ────────────────────────────────────────────────
