@@ -257,7 +257,7 @@ class TestCoordinator:
         _, plan = planned(15000, 2)
         assert plan.summary["unfilled_count"] > 0 and plan.summary["spent"] <= 15000
         unfilled = [ln for ln in plan.lines.values() if ln["status"] == "unfilled"]
-        assert all("nothing was relaxed" in ln["why"] for ln in unfilled)
+        assert all("nothing was relaxed" in ln["why"].lower() for ln in unfilled)
 
     def test_unconfirmed_stock_is_never_called_confirmed(self):
         _, plan = planned()

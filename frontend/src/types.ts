@@ -50,6 +50,7 @@ export interface PlanItem {
   alternatives: Alternative[];
   why: string;
   no_data?: boolean;
+  cheapest_price?: number | null;
   search_query?: string;
   inspected: number;
   dropped_accessories: number;
@@ -69,6 +70,9 @@ export interface Summary {
   unverified: number;
   unfilled_count: number;
   no_data_count?: number;
+  minimum_total?: number | null;
+  shortfall?: number;
+  budget_needed?: number | null;
   themes?: string[];
   themed_items?: number;
   items: number;

@@ -484,7 +484,9 @@ class ChatAssistant:
         s, r = plan.summary, plan.request
         subject = f"your {r.label}" if r.bedrooms else f"the {r.label}"
         who = (f" for a {r.age}-year-old" if r.age else f" for a {r.audience}" if r.audience else "") if not r.bedrooms else ""
-        head = (f"I planned {subject}{who}: {s['items']} items, "
+        filled = s["items"] - s["unfilled_count"]
+        count = f"{filled} of {s['items']} items" if filled < s["items"] else f"{s['items']} items"
+        head = (f"I planned {subject}{who}: {count}, "
                 f"{inr(s['spent'])} of your {inr(s['total_budget'])} budget ({s['utilisation']:.0%}), "
                 f"{inr(s['remaining'])} left.")
         notes = []
@@ -501,7 +503,14 @@ class ChatAssistant:
             notes.append(f"Stock is not confirmed for {s['unverified']} item(s), so I marked them unverified - "
                          "check the retailer before buying.")
         unfilled = s["unfilled_count"] - s.get("no_data_count", 0)
-        if unfilled > 0:
+        if unfilled > 0 and s.get("shortfall"):
+            names = ", ".join(ln["category_label"].lower() for ln in plan.lines.values()
+                              if ln["status"] == "unfilled" and not ln.get("no_data"))
+            notes.append(f"The budget is too small for everything: even the cheapest listing for every item adds up to "
+                         f"{inr(s['minimum_total'])}, {inr(s['shortfall'])} over your {inr(s['total_budget'])}. I left out "
+                         f"the {names} rather than break your limit. Raise the budget to about {inr(s['budget_needed'])} "
+                         f"to get it, or tell me to drop an item.")
+        elif unfilled > 0:
             notes.append(f"{unfilled} item(s) could not be filled within the budget; I did not relax any limit.")
         origins = {ln["data_origin"] for ln in plan.lines.values()}
         if "simulated" in origins:

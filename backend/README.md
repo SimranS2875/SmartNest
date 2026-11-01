@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2331 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 425 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2365 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 459 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1059,6 +1059,15 @@ default and does nothing unless `SMARTNEST_ALLOW_LIVE_SEARCH=1`, a SerpApi key i
 (`SERPAPI_LIFETIME_LIMIT`, counted in `.serpapi_usage.json`) is not used up; only categories in the current plan can be
 searched; the browser asks for confirmation; the planner never searches by itself. `POST /api/sessions/{id}/search`
 returns 409 (switched off / allowance used up), 502 (the search failed) or 404 (nothing usable found).
+
+**Tight budgets.** Item budgets start as shares by category weight, but a share can be smaller than the cheapest listing even
+when everything would fit. If a buyable item is left unfilled, SmartNest asks the Comparison agent for the cheapest valid price
+of every item. If those minimums fit the budget, each item gets its own minimum plus a share of the slack and the plan is
+re-made, so **every item is filled whenever filling them all is possible** (tested as a property over many budgets, on real and
+simulated data). If they do not fit, nothing is relaxed: the unfilled item says what the cheapest listing costs and how much is
+left, the plan reports `minimum_total`, `shortfall` and `budget_needed`, and the interface offers **Raise budget to ₹X** and
+**Remove item** on the card (for example ₹25,000 for a 10-year-old's room: the cheapest wardrobe alone is ₹12,319, the cheapest
+valid choice for all 11 items totals ₹29,581, so the wardrobe is left out and ₹30,000 is suggested).
 
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
