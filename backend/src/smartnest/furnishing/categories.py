@@ -8,7 +8,10 @@ Nothing here describes a particular product, so nothing here can fabricate produ
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,12 @@ class CategoryProfile:
     default_weight: float            # share of the whole budget before renormalisation
     needs_seating: bool = False
     theme_sensitive: bool = False    # the listing title is expected to carry a theme (posters, bedding...)
+    derived_floor: bool = False      # no curated price range: drop listings far below the typical price of the results
+
+    @property
+    def custom(self) -> bool:
+        """A category made on the fly from a name (not one of the curated ones)."""
+        return self.id.startswith(CUSTOM_PREFIX)
 
     def search_query(self, themes: tuple[str, ...] = ()) -> str:
         """The shopping search text for this category; user themes are added only where a theme makes sense."""
@@ -99,8 +108,62 @@ CATEGORIES: dict[str, CategoryProfile] = {c.id: c for c in (
 )}
 
 
+# ── Categories made on the fly ────────────────────────────────────────────────────────────────────────────────
+#
+# A request can need something SmartNest has no curated category for ("telescope").  Gemini only supplies the NAME;
+# everything else about the item (prices, links, stock) comes from the shopping search.  A custom category therefore
+# carries no curated knowledge: its search phrase is its name, it has no price range (a floor is derived from the
+# search results themselves), the generic accessory words, and an ordinary budget weight.
+#
+# The id is a strict slug (``x_<up to 4 words>``).  It becomes a snapshot file name and a search phrase, so nothing
+# but ``[a-z0-9_]`` can ever get through.
+
+CUSTOM_PREFIX = "x_"
+MAX_CUSTOM_ID = 40
+_CUSTOM = re.compile(r"^x_[a-z0-9]+(?:_[a-z0-9]+){0,3}$")
+_FILLER = frozenset("a an the for my of set new some with and your our his her their".split())
+
+
+def _singular(word: str) -> str:
+    if len(word) > 3 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def custom_id(name: str) -> str | None:
+    """``"Standing Desks!"`` -> ``"x_standing_desk"``; ``None`` if nothing usable is left."""
+    if not isinstance(name, str):
+        return None
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", ascii_name) if w not in _FILLER]
+    if not words or len(words) > 4:
+        return None
+    words[-1] = _singular(words[-1])
+    candidate = CUSTOM_PREFIX + "_".join(words)
+    return candidate if len(candidate) <= MAX_CUSTOM_ID and _CUSTOM.match(candidate) else None
+
+
+def is_valid_id(category_id: object) -> bool:
+    return isinstance(category_id, str) and (category_id in CATEGORIES or (
+        len(category_id) <= MAX_CUSTOM_ID and bool(_CUSTOM.match(category_id))))
+
+
+@lru_cache(maxsize=512)
+def _custom_profile(category_id: str) -> CategoryProfile:
+    words = category_id[len(CUSTOM_PREFIX):].split("_")
+    phrase = " ".join(words)
+    # a word that is part of what is being bought must not also count as an "accessory" marker (toy, cover...)
+    exclude = tuple(w for w in _ACCESSORIES if w not in phrase)
+    return CategoryProfile(category_id, phrase.capitalize(), phrase, 0.0, 1e12, exclude, 0.05, derived_floor=True)
+
+
 def category(category_id: str) -> CategoryProfile:
-    try:
-        return CATEGORIES[category_id]
-    except KeyError:
-        raise KeyError(f"unknown category {category_id!r}; known: {', '.join(sorted(CATEGORIES))}") from None
+    """The profile for a curated id or a valid custom id; ``KeyError`` for anything else (never a path)."""
+    profile = CATEGORIES.get(category_id) if isinstance(category_id, str) else None
+    if profile is not None:
+        return profile
+    if is_valid_id(category_id):
+        return _custom_profile(category_id)
+    raise KeyError(f"unknown category {category_id!r}")

@@ -194,6 +194,13 @@ class TestGeminiGuards:
         r = a.respond(s, DEMO)
         assert r.wording == "rules" and "12,345" not in r.text
 
+    def test_rewording_that_drops_a_number_is_rejected(self):
+        plain = ChatAssistant().respond(session(), DEMO).text
+        without = plain.replace("₹2,00,000", "your budget")                  # same facts minus one figure
+        s, a = session(), ChatAssistant(FakeGemini(text=without + " unverified"))
+        r = a.respond(s, DEMO)
+        assert r.wording == "rules" and "₹2,00,000" in r.text
+
     def test_rewording_that_drops_the_unverified_caution_is_rejected(self):
         s, a = session(), ChatAssistant(FakeGemini(text="Your plan is lovely and everything is ready to buy now."))
         r = a.respond(s, DEMO)

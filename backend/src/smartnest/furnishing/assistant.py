@@ -18,10 +18,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from smartnest.furnishing.categories import CATEGORIES
+from smartnest.furnishing.categories import CATEGORIES, category
 from smartnest.furnishing.rooms import ROOM_KINDS, SCOPE_ROOMS
 from smartnest.furnishing.coordinator import FurnishingCoordinator, FurnishingRequest, Plan, PlanError
+from smartnest.furnishing.brief import guess_bare_budget
 from smartnest.furnishing.intent import ParsedMessage, parse_message
+from smartnest.furnishing.naming import MAX_ITEMS, resolve_names
 from smartnest.furnishing.money import inr
 
 logger = logging.getLogger(__name__)
@@ -93,7 +95,9 @@ class ChatAssistant:
             return Reply(f"That message is too long (over {MAX_MESSAGE_CHARS} characters).", "error")
         with session.lock:
             session.say("user", message.strip())
-            parsed = parse_message(message, has_plan=session.plan is not None)
+            custom = {s.profile.id: s.profile.search_term for s in session.coordinator._slots
+                      if s.profile.custom} if session.plan is not None else None
+            parsed = parse_message(message, has_plan=session.plan is not None, extra_categories=custom)
             parsed = self._fill_from_gemini(parsed, session)
             try:
                 reply = self._dispatch(session, parsed)
@@ -114,7 +118,9 @@ class ChatAssistant:
         if self._gemini is None:
             return parsed
         if session.plan is None:
-            have_home = parsed.bedrooms or parsed.scope or session.draft.get("bedrooms") or session.draft.get("scope")
+            # Rules know curated words only, so an item list ("a bed and a telescope") always goes to Gemini for the rest;
+            # a home or room already has its template and needs nothing more.
+            have_home = (parsed.bedrooms or parsed.scope or session.draft.get("bedrooms") or session.draft.get("scope"))
             have_budget = parsed.budget is not None or session.draft.get("budget") is not None
             if (have_home and have_budget) or len(parsed.text) < 20:
                 return parsed
@@ -131,7 +137,13 @@ class ChatAssistant:
             parsed.style = parsed.style or brief.get("style")
             parsed.colour = parsed.colour or brief.get("colour")
             parsed.themes = list(dict.fromkeys([*parsed.themes, *brief.get("themes", [])]))[:6]
-            if parsed.bedrooms or parsed.scope or parsed.budget is not None or parsed.themes:
+            if brief.get("items"):
+                # Gemini read the whole sentence, so its list replaces the rules' word-spotting ("standing desk" is not
+                # a "study table"); the rules' list is the fallback when Gemini offers nothing.
+                parsed.items = list(brief["items"])[:MAX_ITEMS]
+            if parsed.budget is None and (parsed.bedrooms or parsed.scope or parsed.items):
+                parsed.budget = guess_bare_budget(parsed.text)         # "a telescope for 40000"
+            if parsed.bedrooms or parsed.scope or parsed.items or parsed.budget is not None or parsed.themes:
                 parsed.action = "new_request"
                 parsed.notes.append("understood with Gemini")
             return parsed
@@ -168,6 +180,7 @@ class ChatAssistant:
             audience: str | None = None
             age: int | None = None
             themes: list[str] = []
+            categories: list[str] = []
             style: str | None = None
             colour: str | None = None
 
@@ -175,7 +188,10 @@ class ChatAssistant:
                   "never guess): rooms (a list from: " + ", ".join(ROOM_KINDS) + "; use kids_bedroom for a child's or "
                   "teenager's bedroom), bedrooms (whole-home size such as 2 for a 2BHK, else null), budget (total "
                   "rupees as a number), audience (child, teen or adult), age (number), themes (interest words the person "
-                  "likes, lower case single words), style, colour.\n\nREQUEST:\n" + text)
+                  "likes, lower case single words), categories (the THINGS the person wants to buy, as short generic names such as "
+                  "bed, wardrobe or telescope: only what they asked for, or what a stated purpose clearly needs, at most 8; "
+                  "an empty list when they only named a room or a whole home; names only, no prices, brands or sentences), "
+                  "style, colour.\n\nREQUEST:\n" + text)
         try:
             raw = self._gemini._structured(prompt, HomeBrief, prompts.SYSTEM_EXTRACTION, what="home brief")
         except Exception as exc:
@@ -193,6 +209,7 @@ class ChatAssistant:
             clean["audience"] = raw.audience
         if isinstance(raw.age, int) and not isinstance(raw.age, bool) and 0 <= raw.age <= 99:
             clean["age"] = raw.age
+        clean["items"] = resolve_names(raw.categories if isinstance(raw.categories, list) else [])
         themes = [t.strip().lower() for t in raw.themes if isinstance(t, str)]
         clean["themes"] = [t for t in dict.fromkeys(themes) if re.fullmatch(r"[a-z][a-z \-]{1,28}", t)][:6]
         for key, value in (("style", raw.style), ("colour", raw.colour)):
@@ -229,6 +246,9 @@ class ChatAssistant:
             elif d.get("audience"):
                 who = f" for a {d['audience']}"
             parts.append(" and ".join(SCOPE_ROOMS[k].label.lower() for k in d["scope"]) + who)
+        if d.get("items"):
+            names = [category(i).label.lower() for i in d["items"]]
+            parts.append(("also " if (d.get("bedrooms") or d.get("scope")) else "you want ") + ", ".join(names))
         if d.get("budget") is not None:
             parts.append(f"a budget of {inr(d['budget'])}")
         if d.get("themes"):
@@ -247,21 +267,24 @@ class ChatAssistant:
             d["scope"] = list(dict.fromkeys(p.scope))
         if p.themes:
             d["themes"] = list(dict.fromkeys([*d.get("themes", []), *p.themes]))[:6]
+        if p.items:
+            d["items"] = list(dict.fromkeys([*d.get("items", []), *p.items]))[:MAX_ITEMS]
         # a bare number while the assistant is waiting for the budget is the budget ("50000")
         bare = BARE_AMOUNT.fullmatch(p.text or "")
-        if bare and d.get("budget") is None and (d.get("bedrooms") or d.get("scope")):
+        if bare and d.get("budget") is None and (d.get("bedrooms") or d.get("scope") or d.get("items")):
             amount = float(bare.group(1).replace(",", ""))
             if amount >= 1000:
                 d["budget"] = amount
         missing = []
-        if not d.get("bedrooms") and not d.get("scope"):
+        if not d.get("bedrooms") and not d.get("scope") and not d.get("items"):
             missing.append("rooms")
         if d.get("budget") is None:
             missing.append("budget")
         if missing:
             asks = []
             if "rooms" in missing:
-                asks.append("which room or home I should furnish (for example \"my son's bedroom\" or \"2BHK\")")
+                asks.append("which room or home I should furnish, or what you want to buy (for example "
+                            "\"my son's bedroom\", \"2BHK\" or \"a bed and a wardrobe\")")
             if "budget" in missing:
                 asks.append("your total budget (for example ₹50,000)")
             seen = self._understood(d)
@@ -270,7 +293,7 @@ class ChatAssistant:
         plan = session.start(FurnishingRequest(
             d["budget"], d.get("bedrooms"), d.get("style"), d.get("colour"), None,
             () if d.get("bedrooms") else tuple(d.get("scope") or ()), d.get("audience"), d.get("age"),
-            tuple(d.get("themes") or ())))
+            tuple(d.get("themes") or ()), tuple(d.get("items") or ())))
         session.draft = {}
         return Reply(self.describe_plan(plan, intro=True), "new_request", changed=True)
 
@@ -326,7 +349,8 @@ class ChatAssistant:
         plan = None
         for sid in ids:
             plan = session.apply({"type": "remove_item", "slot_id": sid})
-        names = ", ".join(sid.replace("_", " ").replace(".", " - ") for sid in ids)
+        labels = {sl.slot_id: sl.label for sl in session.coordinator._slots}
+        names = ", ".join(labels.get(sid, sid) for sid in ids)
         return Reply(f"Removed from the plan: {names}. " + self._delta(None, plan), "remove_item", changed=True)
 
     def _do_out_of_stock(self, session: HomeSession, p: ParsedMessage) -> Reply:
@@ -535,6 +559,9 @@ class ChatAssistant:
             return reply
         if self._numbers(out.text) - self._numbers(reply.text):
             logger.warning("Gemini reply rejected: it introduced a number")
+            return reply
+        if self._numbers(reply.text) - self._numbers(out.text):
+            logger.warning("Gemini reply rejected: it dropped a number")      # a budget or shortfall must not vanish
             return reply
         if ("unverified" in reply.text.lower() and "unverified" not in out.text.lower() and "not confirmed" not in out.text.lower()) \
                 or ("SIMULATED" in reply.text and "simulated" not in out.text.lower()):

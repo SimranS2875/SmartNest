@@ -35,6 +35,8 @@ from smartnest.furnishing.activity import ActivityLog, AgentBus, AgentCallError
 from smartnest.furnishing.agents import BudgetAgent, ComparisonAgent, ProductResearchAgent, SpacePlanningAgent
 from smartnest.furnishing.money import inr
 from smartnest.furnishing.catalog import ORIGIN_REAL, ORIGIN_SIMULATED, ProductCatalog
+from smartnest.furnishing.categories import is_valid_id
+from smartnest.furnishing.naming import MAX_ITEMS
 from smartnest.furnishing.rooms import ROOM_KINDS, SCOPE_ROOMS, Slot
 
 COORD = "coordinator"
@@ -56,12 +58,16 @@ class FurnishingRequest:
     audience: str | None = None                  # child / teen / adult
     age: int | None = None
     themes: tuple[str, ...] = ()                 # interests that steer theme-sensitive items (wall decor)
+    items: tuple[str, ...] = ()                  # things to buy (category ids): a list instead of, or on top of, rooms
 
     @property
     def label(self) -> str:
         if self.bedrooms:
             return f"{self.bedrooms}BHK"
-        return ", ".join(SCOPE_ROOMS[k].label.lower() for k in self.scope)
+        parts = [SCOPE_ROOMS[k].label.lower() for k in self.scope]
+        if self.items and not parts:
+            parts = ["shopping list"]
+        return ", ".join(parts)
 
     def with_changes(self, **changes: Any) -> "FurnishingRequest":
         return replace(self, **changes)
@@ -71,10 +77,12 @@ class FurnishingRequest:
                 or self.total_budget != self.total_budget or self.total_budget <= 0 or self.total_budget > 1e9:
             raise PlanError("the budget must be a positive number of rupees")
         if self.bedrooms is None:
-            if not self.scope:
-                raise PlanError("tell me which room(s) to furnish, or a home type such as 2BHK")
+            if not self.scope and not self.items:
+                raise PlanError("tell me which room(s) to furnish, what to buy, or a home type such as 2BHK")
         elif not isinstance(self.bedrooms, int) or isinstance(self.bedrooms, bool) or not 1 <= self.bedrooms <= 5:
             raise PlanError("bedrooms must be a whole number from 1 to 5")
+        if len(self.items) > MAX_ITEMS or any(not is_valid_id(i) for i in self.items):
+            raise PlanError(f"items must be up to {MAX_ITEMS} valid categories")
         if any(k not in ROOM_KINDS for k in self.scope):
             raise PlanError("unknown room; choose from " + ", ".join(ROOM_KINDS))
         if self.audience not in (None, "child", "teen", "adult"):
@@ -132,7 +140,7 @@ class Plan:
         return {
             "request": {"total_budget": self.request.total_budget, "bedrooms": self.request.bedrooms,
                         "style": self.request.style, "colour": self.request.colour, "label": self.request.label,
-                        "scope": list(self.request.scope), "audience": self.request.audience,
+                        "scope": list(self.request.scope), "items": list(self.request.items), "audience": self.request.audience,
                         "age": self.request.age, "themes": list(self.request.themes)},
             "version": self.version, "updated_at": self.updated_at, "assumptions": self.assumptions,
             "rooms": self.rooms, "items": list(self.lines.values()), "summary": self.summary,
@@ -183,7 +191,7 @@ class FurnishingCoordinator(CartMixin):
         self._set_beliefs(request)
         try:
             planned = self.bus.call("space_planning", "plan", {
-                "bedrooms": request.bedrooms, "scope": list(request.scope), "age": request.age,
+                "bedrooms": request.bedrooms, "scope": list(request.scope), "items": list(request.items), "age": request.age,
                 "room_dimensions": request.room_dimensions},
                 summary="asked Space Planning for the rooms and items")
         except AgentCallError as exc:

@@ -17,8 +17,8 @@ from typing import Any
 from smartnest.furnishing import budget as budget_mod
 from smartnest.furnishing.brief import theme_matches
 from smartnest.furnishing.catalog import ProductCatalog
-from smartnest.furnishing.categories import CATEGORIES, kid_signal, mature_reason
-from smartnest.furnishing.rooms import Slot, parse_home_type, rooms_for, rooms_for_scope, slots_for
+from smartnest.furnishing.categories import category, kid_signal, mature_reason
+from smartnest.furnishing.rooms import Slot, parse_home_type, rooms_for, rooms_for_items, rooms_for_scope, slots_for
 from smartnest.optimization import UtilityOptimizer
 from smartnest.optimization.utility_optimizer import CandidateEvaluation
 
@@ -31,9 +31,11 @@ class SpacePlanningAgent:
             raise ValueError(f"unknown task {task!r}")
         bedrooms = data.get("bedrooms")
         scope = list(data.get("scope") or [])
+        items = list(data.get("items") or [])
         assumptions: list[str] = []
-        if bedrooms is None and not scope:
+        if bedrooms is None and not scope and not items:
             bedrooms = parse_home_type(str(data.get("home_text") or ""))
+        rooms: list = []
         if bedrooms is not None:
             rooms = rooms_for(int(bedrooms), data.get("room_dimensions"))
             assumptions.append(f"A {bedrooms}BHK has a living room, {bedrooms} bedroom(s) and a kitchen.")
@@ -42,14 +44,24 @@ class SpacePlanningAgent:
         elif scope:
             rooms = rooms_for_scope(scope, data.get("room_dimensions"))
             for room in rooms:
-                assumptions.append(f"{room.label}: " + ", ".join(CATEGORIES[c].label.lower() for c in room.categories) + ".")
+                assumptions.append(f"{room.label}: " + ", ".join(category(c).label.lower() for c in room.categories) + ".")
             if "kids_bedroom" in scope:
                 age = data.get("age")
                 assumptions.append("This is a child's room" + (f" (age {age})" if age else "") +
                                    ": SmartNest looks for a single/kid's bed and a study table. Sizes are only checked "
                                    "where a listing states them.")
-        else:
-            raise ValueError("neither a home type (e.g. 2BHK) nor any room was given")
+        if items:
+            have = {c for r in rooms for c in r.categories}
+            extra = [i for i in items if i not in have]
+            if extra:
+                rooms += rooms_for_items(extra, "Extras" if rooms else "Shopping list")
+                assumptions.append("Things you asked for: " + ", ".join(category(c).label.lower() for c in extra) + ".")
+                custom = [category(c).label.lower() for c in extra if category(c).custom]
+                if custom:
+                    assumptions.append("No curated knowledge for " + ", ".join(custom) + ": SmartNest searches for them by "
+                                       "name and judges prices only against the other results it finds.")
+        if not rooms:
+            raise ValueError("neither a home type (e.g. 2BHK), a room nor anything to buy was given")
         slots = slots_for(rooms)
         if not any(r.width_cm or r.depth_cm for r in rooms):
             assumptions.append("No room dimensions were given, so no size limits were applied; products whose size "
@@ -67,7 +79,7 @@ class ProductResearchAgent:
     def handle(self, task: str, data: dict[str, Any]) -> dict[str, Any]:
         if task != "research":
             raise ValueError(f"unknown task {task!r}")
-        profile = CATEGORIES[data["category"]]
+        profile = category(data["category"])
         listings = self._catalog.listings(profile.id)
         child = data.get("audience") in ("child", "teen")
         kept, dropped = [], []
@@ -80,6 +92,21 @@ class ProductResearchAgent:
                 dropped.append({"name": record.get("name"), "price": record.get("price"), "reason": reason})
             else:
                 kept.append(record)
+        if profile.derived_floor and len(kept) >= 5:
+            # No curated price range for a custom category, so take it from the results: a listing far below the typical
+            # price of the batch is almost always an accessory, a part or a sample.
+            prices = sorted(float(r["price"]) for r in kept)
+            median = prices[len(prices) // 2]
+            floor, still = 0.25 * median, []
+            for record in kept:
+                if float(record["price"]) < floor:
+                    dropped.append({"name": record.get("name"), "price": record.get("price"),
+                                    "reason": f"price Rs {float(record['price']):,.0f} is far below the typical "
+                                              f"{profile.label.lower()} in these results (median Rs {median:,.0f}); "
+                                              "likely an accessory"})
+                else:
+                    still.append(record)
+            kept = still
         return {"category": profile.id, "records": kept, "dropped": dropped, "origin": listings.origin,
                 "retrieved_at": listings.retrieved_at, "query": listings.query,
                 "rejected_at_parse": listings.rejected, "notes": listings.notes,

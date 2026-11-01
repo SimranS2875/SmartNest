@@ -81,7 +81,7 @@ export interface Summary {
 export interface Plan {
   request: {
     total_budget: number; bedrooms: number | null; style: string | null; colour: string | null; label: string;
-    scope: string[]; audience: string | null; age: number | null; themes: string[];
+    scope: string[]; items?: string[]; audience: string | null; age: number | null; themes: string[];
   };
   version: number;
   updated_at: string;
