@@ -1148,7 +1148,7 @@ python src/serve.py                            # API on http://127.0.0.1:8000   
 cd ../frontend && npm install && npm run dev   # UI on http://localhost:5173 (proxies /api to the backend)
 python src/furnishing_run.py                   # terminal demo of the agents, the plan and replanning
 ```
-Settings (environment): `SMARTNEST_ALLOW_SIMULATED=auto|0|1` (auto: only when no real snapshot exists),
+Settings (read from `backend/.env`; a real environment variable wins): `SMARTNEST_ALLOW_SIMULATED=auto|0|1` (auto: only when no real snapshot exists),
 `SMARTNEST_USE_GEMINI=auto|0|1`, `SMARTNEST_USE_ATLAS=0|1`, `SMARTNEST_ALLOW_LIVE_SEARCH=0|1`, `SMARTNEST_CATALOG_DIR`, `SMARTNEST_CORS_ORIGINS`.
 Sessions are stored as `{request, events}` and rebuilt by replay (planning is deterministic), so a restart loses nothing.
 

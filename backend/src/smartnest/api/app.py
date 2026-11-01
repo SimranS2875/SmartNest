@@ -117,8 +117,17 @@ class ApiSettings(BaseModel):
     requests_per_minute: int = 120
 
     @classmethod
-    def from_env(cls, environ: dict[str, str] | None = None) -> "ApiSettings":
-        env = os.environ if environ is None else environ
+    def from_env(cls, environ: dict[str, str] | None = None, env_file: Path | str | None = None) -> "ApiSettings":
+        """Settings from ``SMARTNEST_*`` variables: the real environment wins over ``backend/.env``.
+
+        An explicit ``environ`` (tests) is used as given, with no file, so a test never depends on the developer's .env.
+        """
+        if environ is None:
+            from dotenv import dotenv_values
+            path = Path(env_file) if env_file is not None else Path(__file__).resolve().parents[3] / ".env"
+            env = {**(dotenv_values(path) if path.is_file() else {}), **os.environ}
+        else:
+            env = environ
 
         def flag(name: str, default: Any) -> Any:
             raw = (env.get(name) or "").strip().lower()
