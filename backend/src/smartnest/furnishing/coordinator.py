@@ -35,7 +35,7 @@ from smartnest.furnishing.activity import ActivityLog, AgentBus, AgentCallError
 from smartnest.furnishing.agents import BudgetAgent, ComparisonAgent, ProductResearchAgent, SpacePlanningAgent
 from smartnest.furnishing.money import inr
 from smartnest.furnishing.catalog import ORIGIN_REAL, ORIGIN_SIMULATED, ProductCatalog
-from smartnest.furnishing.categories import is_valid_id
+from smartnest.furnishing.categories import category as category_profile, is_valid_id
 from smartnest.furnishing.naming import MAX_ITEMS
 from smartnest.furnishing.rooms import ROOM_KINDS, SCOPE_ROOMS, Slot
 
@@ -243,6 +243,8 @@ class FurnishingCoordinator(CartMixin):
             self.beliefs.update("user", "style", style, source="user")
             self.beliefs.update("user", "colour", colour, source="user")
             self.beliefs.update("user", "themes", list(themes), source="user")
+            for cat in [c for c in self._research if category_profile(c).theme_sensitive]:
+                self._research.pop(cat)                  # theme-dependent listings must be re-fetched for the new theme
             self.log.record(COORD, "replan", f"user changed preferences: style={style}, colour={colour}, "
                             f"themes={', '.join(themes) or 'none'}", details=event)
         elif kind == "remove_item":
@@ -325,7 +327,8 @@ class FurnishingCoordinator(CartMixin):
     def _research_category(self, category: str) -> dict[str, Any]:
         if category not in self._research:
             result = self.bus.call("product_research", "research",
-                                   {"category": category, "audience": self._request.audience if self._request else None},
+                                   {"category": category, "audience": self._request.audience if self._request else None,
+                                    "themes": list(self._request.themes) if self._request else []},
                                    summary=f"asked Product Research for {category} listings")
             self._research[category] = result
             origin = {ORIGIN_REAL: "real SerpApi snapshot", ORIGIN_SIMULATED: "SIMULATED sample"}.get(
@@ -422,9 +425,11 @@ class FurnishingCoordinator(CartMixin):
             line["cheapest_price"] = cheapest.get(slot.slot_id)
             line["search_query"] = slot.profile.search_query(req.themes)
             if sel is None and line["no_data"]:
+                note = next((n for n in research["notes"] if "does not cover" in n), None)
                 line.update(status="unfilled", product=None, utility=None, completeness=None, alternatives=[],
-                            why=(f"SmartNest has no {slot.profile.label.lower()} listings yet, so it cannot recommend one. "
-                                 f"A live search for \"{line['search_query']}\" would find some."))
+                            why=(f"SmartNest has no {slot.profile.label.lower()} listings for this yet, so it cannot recommend "
+                                 f"one. A live search for \"{line['search_query']}\" would find some."
+                                 + (f" ({note[0].upper() + note[1:]}.)" if note else "")))
             elif sel is None:
                 low = cheapest.get(slot.slot_id)
                 left = round(budget - spent_all, 2)
@@ -444,6 +449,10 @@ class FurnishingCoordinator(CartMixin):
                             contributions=sel["contributions"],
                             alternatives=[_alternative(o) for o in res["options"] if o["product_id"] != sel["product_id"]][:4],
                             why=self._why(slot, sel, res))
+            # A theme-sensitive item (wall decor, rug) whose pick does not mention any requested theme is NOT a themed
+            # pick: say so, and keep the query a themed live search would use.
+            line["theme_unmatched"] = bool(sel is not None and slot.profile.theme_sensitive and req.themes
+                                           and not (line["product"] or {}).get("theme_matches"))
             lines[slot.slot_id] = line
 
         summary = self.bus.call("budget", "summarise", {"budget": budget, "slots": slot_dicts, "prices": prices},
@@ -458,6 +467,7 @@ class FurnishingCoordinator(CartMixin):
         summary["budget_needed"] = (math.ceil(minimum_total / 500) * 500 if minimum_total and summary["shortfall"] > 0
                                     else None)
         summary["themes"] = list(req.themes)
+        summary["theme_unmatched_count"] = sum(1 for ln in lines.values() if ln.get("theme_unmatched"))
         summary["themed_items"] = sum(1 for ln in lines.values() if (ln.get("product") or {}).get("theme_matches"))
         self.log.record("budget", "decision", f"spend ₹{summary['spent']:,.0f} of ₹{budget:,.0f} "
                         f"({summary['utilisation']:.0%}); within budget: {summary['within_budget']}")

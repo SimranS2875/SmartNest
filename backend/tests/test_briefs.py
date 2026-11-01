@@ -432,7 +432,8 @@ class FakeSearcher:
         if self.empty:
             return CategoryListings(category, [], ORIGIN_REAL, "t", "q")
         records = [dict(r, data_origin=ORIGIN_REAL) for r in SimulatedCatalog().listings(category).records]
-        found = CategoryListings(category, records, ORIGIN_REAL, "2026-11-01T00:00:00+00:00", "q")
+        found = CategoryListings(category, records, ORIGIN_REAL, "2026-11-01T00:00:00+00:00",
+                                 CATEGORIES[category].search_query(tuple(themes)))
         self.snapshots.save(found)
         return found
 

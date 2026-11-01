@@ -140,6 +140,16 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
         </div>
       </div>
 
+      {item.theme_unmatched && (
+        <div className="mt-3 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn" data-testid="theme-note">
+          <strong>Not themed:</strong> no saved listing mentions your theme, so this is a plain pick.
+          {live?.enabled && item.search_query ? (
+            <> <button type="button" disabled={busy} onClick={() => onSearch(item.category)}
+              className="font-medium underline underline-offset-2 disabled:opacity-60">Search live for “{item.search_query}” (1 request)</button></>
+          ) : item.search_query ? <> A themed search would be “{item.search_query}”.</> : null}
+        </div>
+      )}
+
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <PurchaseLink product={p} />
         <div className="flex flex-wrap gap-1.5">
@@ -171,6 +181,11 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
             Budget ceiling for this item: {inr(item.ceiling)}.
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
+            {live?.enabled && (
+              <Button disabled={busy} onClick={() => onSearch(item.category)} aria-label={`Refresh ${item.category_label} listings`}>
+                Refresh listings (1 request)
+              </Button>
+            )}
             <Button variant="danger" disabled={busy} onClick={() => onOutOfStock(p.product_id)}>Mark out of stock</Button>
             <Button variant="danger" disabled={busy} onClick={() => onRemove(item.slot_id)}>Remove item</Button>
             {item.user_choice && <Button disabled={busy} onClick={() => onClearChoice(item.slot_id)}>Back to SmartNest's pick</Button>}

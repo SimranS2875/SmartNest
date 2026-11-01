@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2501 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 595 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2541 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 635 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1110,6 +1110,25 @@ else comes from the shopping search (SerpApi) or, where there is no data yet, an
 * Gemini rewording of replies must now keep **every** number of the rule-based text (it already could not add any), so a budget
   or shortfall figure cannot silently vanish.
 
+### Saved listings must answer THIS request (themes)
+Wall decor and rugs depend on the theme, so a saved search is only reused when it covers the requested theme
+(`SnapshotCatalog.listings_for`):
+* every themed live search is saved in its **own file** (`wall_decor__<words>.json`), so a new theme never overwrites an old one;
+* for a request, the best saved search wins: an exact match, else one that mentions a requested theme (more is better), else a
+  generic search with no theme words (a plain "kids rug" is valid for any theme);
+* if nothing covers the theme (a "monster cartoon wall poster" snapshot for a princess / Barbie request) the item gets **no
+  listings** ("No listings yet ... the saved listings were searched for 'monster cartoon wall poster', which does not cover your
+  theme") and its share of the budget goes to the other items; it is never filled with the wrong thing;
+* a generic pick that mentions none of the requested themes is flagged **"Not themed"** (`theme_unmatched`) with the themed
+  search it would take; changing the themes in chat re-reads these listings.
+
+### Using live requests
+Live search never runs on its own. With `SMARTNEST_ALLOW_LIVE_SEARCH=1` the interface offers: **Search live** on an item with no
+listings, **Search live for the themed query** on a "Not themed" pick, **Refresh listings (1 request)** in any item's "Why this?"
+panel (to re-fetch fresh data for any category), and one banner, **Search live for all N (N requests)**, that runs them one at a
+time (a failure stops the run) after a single confirmation that states the cost. Everything else is served from saved snapshots, by design,
+so a normal plan costs no request.
+
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
   budget). Missing ratings, sizes, styles and colours stay missing and are listed as "not stated".
@@ -1158,7 +1177,7 @@ Sessions are stored as `{request, events}` and rebuilt by replay (planning is de
   snapshot with unaltered name, price, seller and link; skipped if no snapshots).
 * `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
   chat panel, budget view, API client errors.
-* `node e2e/items.mjs` (a request for things incl. an unknown one, needs the Gemini key), `node e2e/dark-mode.mjs` (theme toggle, persistence, contrast audit), `node e2e/tight-budget.mjs` (a budget too small
+* `node e2e/princess.mjs` (a theme with no saved listings; nothing is spent), `node e2e/items.mjs` (a request for things incl. an unknown one, needs the Gemini key), `node e2e/dark-mode.mjs` (theme toggle, persistence, contrast audit), `node e2e/tight-budget.mjs` (a budget too small
   for everything) and `node e2e/kids-room.mjs` (a child's bedroom with themes, a vague first message, a bare-number answer) and
   `node e2e/demo.mjs` (frontend, Playwright against the running stack): 13 and 23 checks from the demo message to the agent
   monitor, a page reload and the mobile layout.

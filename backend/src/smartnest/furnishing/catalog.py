@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,6 +52,15 @@ class ProductCatalog(Protocol):
     def listings(self, category_id: str) -> CategoryListings: ...
 
 
+def _words(text: str | None) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def _key(query: str) -> str:
+    """A file-name-safe key for a search: its sorted words (``[a-z0-9_]`` only, so it can never be a path)."""
+    return "_".join(sorted(_words(query)))[:80]
+
+
 # ── Real snapshots ─────────────────────────────────────────────────────────
 
 class SnapshotCatalog:
@@ -60,12 +70,16 @@ class SnapshotCatalog:
         self.directory = Path(directory)
         self.max_age = max_age
 
-    def path_for(self, category_id: str) -> Path:
-        category(category_id)  # validates the id, so it can never become a path traversal
+    def path_for(self, category_id: str, query: str | None = None) -> Path:
+        """``<category>.json``; for a theme-sensitive category searched WITH themes, one file per search
+        (``<category>__<words>.json``), so a new theme never overwrites the data of an old one."""
+        profile = category(category_id)  # validates the id, so it can never become a path traversal
+        if query and profile.theme_sensitive and _words(query) != _words(profile.search_term):
+            return self.directory / f"{category_id}__{_key(query)}.json"
         return self.directory / f"{category_id}.json"
 
     def save(self, listings: CategoryListings) -> Path:
-        path = self.path_for(listings.category)
+        path = self.path_for(listings.category, listings.query)
         path.parent.mkdir(parents=True, exist_ok=True)
         doc = {"category": listings.category, "origin": ORIGIN_REAL, "retrieved_at": listings.retrieved_at,
                "query": listings.query, "records": listings.records, "rejected": listings.rejected,
@@ -73,8 +87,63 @@ class SnapshotCatalog:
         path.write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
         return path
 
+    def listings_for(self, category_id: str, themes: tuple[str, ...] = ()) -> CategoryListings:
+        """Listings that answer THIS request.
+
+        For a theme-sensitive category (wall decor, rugs) several searches may be saved (one per theme).  The best
+        one for the request wins: an exact match for the wanted search, else one that mentions a requested theme (the
+        more the better), else a generic search with no theme words.  A "monster cartoon wall poster" search is NOT an
+        answer to a princess-themed request, so when nothing covers the theme the item gets no listings (and can be
+        searched live) instead of silently showing the wrong thing.
+        """
+        profile = category(category_id)
+        if not profile.theme_sensitive:
+            return self.listings(category_id)
+        wanted_words = _words(profile.search_query(tuple(themes)))
+        requested = {w for t in themes for w in _words(t)}
+        term_words = _words(profile.search_term)
+        best: tuple[int, str, CategoryListings] | None = None
+        seen: list[str] = []
+        for path in self._saved(category_id):
+            got = self._load(path, category_id)
+            if not got.records:
+                continue
+            seen.append(got.query or path.stem)
+            query_words = _words(got.query)
+            theme_words = query_words - term_words
+            if query_words == wanted_words:
+                score = 1000
+            elif theme_words & requested:
+                score = 10 + len(theme_words & requested)
+            elif not theme_words:
+                score = 1
+            else:
+                continue
+            if best is None or (score, path.name) > (best[0], best[1]):
+                best = (score, path.name, got)
+        if best is not None:
+            return best[2]
+        wanted = profile.search_query(tuple(themes))
+        if not seen:
+            return CategoryListings(category_id, [], "none", None, wanted,
+                                    notes=[f"no saved snapshot for {category_id}"])
+        return CategoryListings(category_id, [], "none", None, wanted, notes=[
+            f"the saved {profile.label.lower()} listings were searched for "
+            + " and ".join(f"\u201c{q}\u201d" for q in seen)
+            + f", which does not cover your theme ({', '.join(themes) or 'none'})"])
+
+    def _saved(self, category_id: str) -> list[Path]:
+        """Every saved search file for a category: the base file and any ``<category>__<words>.json``."""
+        if not self.directory.is_dir():
+            return []
+        category(category_id)                                 # validates the id before it is used in a glob
+        files = [self.directory / f"{category_id}.json", *sorted(self.directory.glob(f"{category_id}__*.json"))]
+        return [f for f in files if f.is_file()]
+
     def listings(self, category_id: str) -> CategoryListings:
-        path = self.path_for(category_id)
+        return self._load(self.path_for(category_id), category_id)
+
+    def _load(self, path: Path, category_id: str) -> CategoryListings:
         if not path.is_file():
             return CategoryListings(category_id, [], "none", notes=[f"no saved snapshot for {category_id}"])
         try:
@@ -159,6 +228,9 @@ class SimulatedCatalog:
         self.per_category = per_category
         self._at = retrieved_at or datetime(2026, 1, 1, tzinfo=timezone.utc)
 
+    def listings_for(self, category_id: str, themes: tuple[str, ...] = ()) -> CategoryListings:
+        return self.listings(category_id)                   # invented samples: the theme does not change them
+
     def listings(self, category_id: str) -> CategoryListings:
         category(category_id)
         if category_id not in _SHAPES:
@@ -187,8 +259,16 @@ class LayeredCatalog:
         self._sim = simulated
         self.allow_simulated = allow_simulated and simulated is not None
 
+    def listings_for(self, category_id: str, themes: tuple[str, ...] = ()) -> CategoryListings:
+        """Like :meth:`listings`, for a theme-sensitive category: real data only if it covers the requested theme."""
+        fetch = getattr(self._real, "listings_for", None)
+        real = fetch(category_id, themes) if fetch else self._real.listings(category_id)
+        return self._or_simulated(category_id, real)
+
     def listings(self, category_id: str) -> CategoryListings:
-        real = self._real.listings(category_id)
+        return self._or_simulated(category_id, self._real.listings(category_id))
+
+    def _or_simulated(self, category_id: str, real: CategoryListings) -> CategoryListings:
         if real.records:
             return self._tag(real)
         if self.allow_simulated:

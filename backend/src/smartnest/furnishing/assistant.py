@@ -507,7 +507,9 @@ class ChatAssistant:
     def describe_plan(plan: Plan, *, intro: bool = False) -> str:
         s, r = plan.summary, plan.request
         subject = f"your {r.label}" if r.bedrooms else f"the {r.label}"
-        who = (f" for a {r.age}-year-old" if r.age else f" for a {r.audience}" if r.audience else "") if not r.bedrooms else ""
+        art = "an" if r.age is not None and (r.age in (8, 11, 18) or 80 <= r.age <= 89) else "a"
+        who = (f" for {art} {r.age}-year-old" if r.age is not None else f" for a {r.audience}" if r.audience else "") \
+            if not r.bedrooms else ""
         filled = s["items"] - s["unfilled_count"]
         count = f"{filled} of {s['items']} items" if filled < s["items"] else f"{s['items']} items"
         head = (f"I planned {subject}{who}: {count}, "
@@ -523,6 +525,10 @@ class ChatAssistant:
                 notes.append(f"{s['themed_items']} pick(s) have titles that mention {', '.join(r.themes)}.")
             else:
                 notes.append(f"No listing I have mentions {', '.join(r.themes)}, so I cannot say any pick matches that theme.")
+        if s.get("theme_unmatched_count"):
+            names = ", ".join(ln["category_label"].lower() for ln in plan.lines.values() if ln.get("theme_unmatched"))
+            notes.append(f"For {names}, no saved listing mentions your theme ({', '.join(r.themes)}), so the pick is a "
+                         "plain one, not a themed one; use \"Search live\" on it to look for themed listings.")
         if s["unverified"]:
             notes.append(f"Stock is not confirmed for {s['unverified']} item(s), so I marked them unverified - "
                          "check the retailer before buying.")
