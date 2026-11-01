@@ -32,3 +32,8 @@ backend/.serpapi_usage.json
 backend/keys/
 *.pem
 backend/data/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/e2e/shots/

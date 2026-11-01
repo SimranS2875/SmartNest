@@ -1,0 +1,156 @@
+import { useState } from "react";
+import { COMPONENT_LABEL, STATUS_LABEL, inr, percent, timeAgo } from "../format";
+import type { Alternative, PlanItem } from "../types";
+import { Badge, Button, ScoreBar } from "../ui";
+
+export interface ItemActions {
+  onShortlist: (productId: string) => void;
+  onChoose: (slotId: string, productId: string) => void;
+  onClearChoice: (slotId: string) => void;
+  onOutOfStock: (productId: string) => void;
+  onRemove: (slotId: string) => void;
+}
+
+interface Props extends ItemActions {
+  item: PlanItem;
+  shortlist: string[];
+  busy: boolean;
+}
+
+function Thumb({ src, name }: { src: string | null; name: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div aria-hidden className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-2xl text-stone-400">
+        ⌂
+      </div>
+    );
+  }
+  return <img src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
+    className="h-24 w-24 shrink-0 rounded-lg bg-stone-100 object-contain" />;
+}
+
+export function PurchaseLink({ product }: { product: { buy_url: string | null; link_label: string; simulated: boolean } }) {
+  if (product.simulated || !product.buy_url) {
+    return <span className="text-xs text-muted">{product.link_label}</span>;
+  }
+  return (
+    <a href={product.buy_url} target="_blank" rel="noopener noreferrer"
+      className="text-sm font-medium text-brand underline-offset-2 hover:underline">
+      {product.link_label} ↗
+    </a>
+  );
+}
+
+function AlternativeRow({ alt, slotId, busy, onChoose }: { alt: Alternative; slotId: string; busy: boolean; onChoose: Props["onChoose"] }) {
+  return (
+    <li className="flex items-center justify-between gap-3 py-2 text-sm">
+      <div className="min-w-0">
+        <div className="truncate font-medium" title={alt.name}>{alt.name}</div>
+        <div className="text-xs text-muted">
+          {alt.retailer ?? "Unknown seller"} · utility {alt.utility?.toFixed(1) ?? "—"}
+          {alt.state === "unverified" && " · stock unverified"}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="tabular-nums font-medium">{inr(alt.price)}</span>
+        <Button disabled={busy} onClick={() => onChoose(slotId, alt.product_id)} aria-label={`Use ${alt.name}`}>Use this</Button>
+      </div>
+    </li>
+  );
+}
+
+export function ItemCard({ item, shortlist, busy, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove }: Props) {
+  const [open, setOpen] = useState<"" | "alts" | "why">("");
+  const p = item.product;
+
+  if (!p) {
+    return (
+      <article className="rounded-xl border border-dashed border-red-200 bg-bad-soft/40 p-4" data-testid={`item-${item.slot_id}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h4 className="font-medium">{item.category_label}</h4>
+            <p className="mt-1 text-sm text-bad">{item.why}</p>
+          </div>
+          <Badge tone="bad">{STATUS_LABEL.unfilled}</Badge>
+        </div>
+        <div className="mt-2 text-xs text-muted">Budget ceiling for this item: {inr(item.ceiling)}</div>
+      </article>
+    );
+  }
+
+  const starred = shortlist.includes(p.product_id);
+  return (
+    <article className="rounded-xl border border-line bg-card p-4 shadow-sm" data-testid={`item-${item.slot_id}`}>
+      <div className="flex gap-4">
+        <Thumb src={p.image_url} name={p.name} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted">{item.category_label}</span>
+            {item.status === "confirmed" ? <Badge tone="ok">{STATUS_LABEL.confirmed}</Badge>
+              : <Badge tone="warn" title="The listing does not state whether it is in stock. Check the retailer before buying.">{STATUS_LABEL.unverified}</Badge>}
+            {item.user_choice && <Badge tone="brand">Your choice</Badge>}
+            {p.simulated ? <Badge tone="bad" title="Invented for development; not a real product">Sample data</Badge>
+              : <Badge tone="neutral" title={`Retrieved ${timeAgo(p.retrieved_at)} from Google Shopping`}>Real listing</Badge>}
+          </div>
+          <h4 className="mt-1 line-clamp-2 font-medium leading-snug" title={p.name}>{p.name}</h4>
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-3 text-sm text-muted">
+            <span className="text-lg font-semibold tabular-nums text-ink">{inr(p.price)}</span>
+            <span>{p.retailer ?? "Seller not stated"}</span>
+            {p.rating !== null && <span>★ {p.rating}{p.review_count ? ` (${p.review_count})` : ""}</span>}
+          </div>
+          <div className="mt-2 flex items-center gap-3">
+            <div className="flex-1"><ScoreBar value={item.utility} label={`Utility score for ${item.label}`} /></div>
+            <span className="text-xs tabular-nums text-muted" title="Utility score out of 100">{item.utility?.toFixed(1)}/100</span>
+          </div>
+          <div className="mt-1 text-xs text-muted">
+            Score uses {percent(item.completeness)} of the criteria
+            {item.unavailable && item.unavailable.length > 0 && <> · not stated: {item.unavailable.join(", ")}</>}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <PurchaseLink product={p} />
+        <div className="flex flex-wrap gap-1.5">
+          <Button onClick={() => onShortlist(p.product_id)} aria-pressed={starred} aria-label={starred ? "Remove from shortlist" : "Add to shortlist"}>
+            {starred ? "★ Shortlisted" : "☆ Shortlist"}
+          </Button>
+          <Button onClick={() => setOpen(open === "why" ? "" : "why")} aria-expanded={open === "why"}>Why this?</Button>
+          <Button onClick={() => setOpen(open === "alts" ? "" : "alts")} aria-expanded={open === "alts"}>
+            Alternatives ({item.alternatives.length})
+          </Button>
+        </div>
+      </div>
+
+      {open === "why" && (
+        <div className="mt-3 rounded-lg bg-stone-50 p-3 text-sm">
+          <p>{item.why}</p>
+          {item.contributions && Object.keys(item.contributions).length > 0 && (
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+              {Object.entries(item.contributions).map(([k, v]) => (
+                <div key={k} className="flex justify-between"><dt className="text-muted">{COMPONENT_LABEL[k] ?? k}</dt><dd className="tabular-nums">{v.toFixed(1)} pts</dd></div>
+              ))}
+            </dl>
+          )}
+          <p className="mt-2 text-xs text-muted">
+            {item.inspected} listing(s) checked{item.dropped_accessories ? `, ${item.dropped_accessories} dropped as accessories` : ""}.
+            Budget ceiling for this item: {inr(item.ceiling)}.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button variant="danger" disabled={busy} onClick={() => onOutOfStock(p.product_id)}>Mark out of stock</Button>
+            <Button variant="danger" disabled={busy} onClick={() => onRemove(item.slot_id)}>Remove item</Button>
+            {item.user_choice && <Button disabled={busy} onClick={() => onClearChoice(item.slot_id)}>Back to SmartNest's pick</Button>}
+          </div>
+        </div>
+      )}
+
+      {open === "alts" && (
+        <ul className="mt-3 divide-y divide-line rounded-lg border border-line px-3">
+          {item.alternatives.length === 0 && <li className="py-3 text-sm text-muted">No other option fits this item's budget.</li>}
+          {item.alternatives.map((a) => <AlternativeRow key={a.product_id} alt={a} slotId={item.slot_id} busy={busy} onChoose={onChoose} />)}
+        </ul>
+      )}
+    </article>
+  );
+}
