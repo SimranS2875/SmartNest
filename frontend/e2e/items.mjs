@@ -31,15 +31,15 @@ const health = await (await page.request.get(`${base}/api/health`)).json();
 const searchBtn = telescope.getByRole("button", { name: /Search live/ });
 if (health.live_search?.enabled) {
   // Live search is on: the button works, asks before spending, and cancelling spends nothing.
-  const usedBefore = health.live_search?.used;
+  const usedBefore = health.serpapi_quota?.used;
   let asked = "";
   page.once("dialog", async (d) => { asked = d.message(); await d.dismiss(); });
   check("live search is on: the button is enabled", await searchBtn.isEnabled());
   await searchBtn.click();
   await page.waitForTimeout(500);
-  check("it asks before spending a request", /1 search/.test(asked), asked);
+  check("it asks before spending a request", /1 SerpApi request/.test(asked), asked);
   const after = await (await page.request.get(`${base}/api/health`)).json();
-  check("cancelling spends nothing", after.live_search?.used === usedBefore && (await telescope.innerText()).includes("No listings yet"));
+  check("cancelling spends nothing", after.serpapi_quota?.used === usedBefore && (await telescope.innerText()).includes("No listings yet"));
 } else {
   check("the search is offered but guarded", await searchBtn.isDisabled());
 }
