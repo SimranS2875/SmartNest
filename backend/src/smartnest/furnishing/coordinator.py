@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from smartnest.bdi.beliefs import BeliefBase
+from smartnest.furnishing.cart import CART_EVENTS, CartMixin
 from smartnest.furnishing.activity import ActivityLog, AgentBus, AgentCallError
 from smartnest.furnishing.agents import BudgetAgent, ComparisonAgent, ProductResearchAgent, SpacePlanningAgent
 from smartnest.furnishing.money import inr
@@ -111,7 +112,7 @@ class Plan:
         }
 
 
-class FurnishingCoordinator:
+class FurnishingCoordinator(CartMixin):
     """Builds and maintains one home's furnishing plan."""
 
     def __init__(self, catalog: ProductCatalog, *, log: ActivityLog | None = None) -> None:
@@ -122,6 +123,7 @@ class FurnishingCoordinator:
         for agent_id, agent in self._agents.items():
             self.bus.register(agent_id, agent.handle)
         self.beliefs = BeliefBase()
+        self._init_cart()
         self.plan: Plan | None = None
         self.transitions: list[dict[str, Any]] = []
         self.shortlist: list[str] = []
@@ -162,6 +164,9 @@ class FurnishingCoordinator:
         if self.plan is None or self._request is None:
             raise PlanError("there is no plan yet")
         kind = event.get("type")
+        if kind in CART_EVENTS:                       # the cart changes no plan item, so nothing is re-planned
+            self.apply_cart_event(event)
+            return self.plan
         previous = {k: copy.deepcopy(v) for k, v in self.plan.lines.items()}
         if kind == "out_of_stock":
             pid = self._require_product(event)

@@ -112,7 +112,7 @@ class ParsedMessage:
     colour: str | None = None
     categories: list[str] = field(default_factory=list)
     room: str | None = None
-    action: str = "unknown"      # new_request | set_budget | set_preference | remove_item | out_of_stock |
+    action: str = "unknown"      # cart_add | cart_remove | cart_clear | cart_show | new_request | set_budget | set_preference | remove_item | out_of_stock |
                                  # why | budget_status | overview | compare | help | unknown
     notes: list[str] = field(default_factory=list)
 
@@ -127,6 +127,10 @@ _STATUS = re.compile(r"\b(how much|left|remaining|spent|spend|total|cost|afford|
                      re.IGNORECASE)
 _OVERVIEW = re.compile(r"\b(show|list|what|overview|plan|everything|recommend|rooms?)\b", re.IGNORECASE)
 _COMPARE = re.compile(r"\b(compare|versus|vs\.?|alternatives?|options?|other choices|cheaper|better)\b", re.IGNORECASE)
+_CART = re.compile(r"\b(cart|basket)\b", re.IGNORECASE)
+_CLEAR = re.compile(r"\b(clear|empty|reset)\b", re.IGNORECASE)
+_TAKE_OUT = re.compile(r"\b(remove|delete|take out|drop|get rid of)\b", re.IGNORECASE)
+_ADD = re.compile(r"\b(add|put|include|buy|save)\b", re.IGNORECASE)
 _PREFERENCE = re.compile(r"\b(prefer|style|switch|change|make it|instead|like|want it|go for|colour|color)\b", re.IGNORECASE)
 
 
@@ -142,7 +146,16 @@ def parse_message(text: str, *, has_plan: bool) -> ParsedMessage:
     if not has_plan:
         parsed.action = "new_request" if (parsed.bedrooms or parsed.budget) else "help"
         return parsed
-    if parsed.bedrooms and parsed.budget and not parsed.categories:
+    if _CART.search(text):
+        if _CLEAR.search(text):
+            parsed.action = "cart_clear"
+        elif _TAKE_OUT.search(text) and (parsed.categories or parsed.room):
+            parsed.action = "cart_remove"
+        elif _ADD.search(text):
+            parsed.action = "cart_add"
+        else:
+            parsed.action = "cart_show"
+    elif parsed.bedrooms and parsed.budget and not parsed.categories:
         parsed.action = "new_request"
     elif parsed.categories and _STOCK.search(text):
         parsed.action = "out_of_stock"

@@ -10,6 +10,8 @@ interface Props {
   items: PlanItem[];
   shortlist: string[];
   onToggle: (productId: string) => void;
+  cartIds: string[];
+  onAddToCart: (productId: string) => void;
 }
 
 /** Name and slot of every product the plan knows about, so the shortlist can show names. */
@@ -23,7 +25,7 @@ function known(items: PlanItem[]) {
   return map;
 }
 
-export function CompareView({ sessionId, items, shortlist, onToggle }: Props) {
+export function CompareView({ sessionId, items, shortlist, onToggle, cartIds, onAddToCart }: Props) {
   const [picked, setPicked] = useState<string[]>([]);
   const [rows, setRows] = useState<CompareProduct[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +66,7 @@ export function CompareView({ sessionId, items, shortlist, onToggle }: Props) {
                     <span className="text-xs text-muted">{info?.label}</span></span>
                 </label>
                 <div className="flex items-center gap-2"><span className="tabular-nums">{inr(info?.price)}</span>
+                  <Button disabled={cartIds.includes(id)} onClick={() => onAddToCart(id)} aria-label={`Add ${info?.name ?? id} to cart`}>{cartIds.includes(id) ? "✓ In cart" : "Add to cart"}</Button>
                   <Button onClick={() => onToggle(id)} aria-label={`Remove ${info?.name ?? id} from shortlist`}>Remove</Button></div>
               </li>
             );

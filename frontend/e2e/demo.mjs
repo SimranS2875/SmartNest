@@ -54,6 +54,30 @@ await page.getByRole("columnheader", { name: /./ }).nth(2).waitFor();
 check("compare table shows both products", (await page.getByRole("columnheader").count()) >= 3);
 await page.screenshot({ path: `${out}/03-compare.png`, fullPage: true });
 
+// Cart: add from a card, from the shortlist, then everything
+await page.getByRole("tab", { name: "Plan" }).click();
+await page.getByTestId("item-bedroom_1.bed").getByRole("button", { name: "Add to cart" }).click();
+await page.getByTestId("item-bedroom_1.bed").getByRole("button", { name: "In cart" }).waitFor();
+await page.getByRole("tab", { name: /Cart/ }).click();
+await page.getByText("Cart total").waitFor();
+check("adding to the cart shows one line", (await page.locator("[data-testid^=cart-]").count()) === 1);
+await page.getByRole("button", { name: "Increase quantity" }).click();
+await page.waitForFunction(() => document.querySelector("[aria-live=polite].w-8")?.textContent === "2");
+check("quantity stepper works", true);
+await page.getByRole("button", { name: "Add all plan picks" }).click();
+await page.waitForFunction(() => document.querySelectorAll("[data-testid^=cart-]").length >= 7);
+const total = await page.locator("text=Cart total").locator("xpath=following-sibling::div").first().innerText();
+check("add-all fills the cart within budget", (await page.getByText("over the current budget").count()) === 0, `total ${total}`);
+check("cart never claims confirmed without evidence", (await page.getByText("Stock unverified", { selector: "span" }).count()) > 0);
+await page.screenshot({ path: `${out}/03b-cart.png`, fullPage: true });
+await page.getByRole("button", { name: "Clear cart" }).click();
+await page.getByText("Your cart is empty").first().waitFor();
+check("clear cart empties it", (await page.locator("[data-testid^=cart-]").count()) === 0);
+await page.getByLabel("Message SmartNest").fill("add the sofa to my cart");
+await page.getByRole("button", { name: "Send" }).click();
+await page.waitForFunction(() => document.querySelectorAll("[data-testid^=cart-]").length === 1, null, { timeout: 60000 });
+check("chat can add to the cart", true);
+
 // Budget
 await page.getByRole("tab", { name: "Budget" }).click();
 await page.getByText("Spend by room").waitFor();

@@ -6,12 +6,13 @@ import { ItemCard, type ItemActions } from "./ItemCard";
 interface Props extends ItemActions {
   rooms: RoomView[];
   shortlist: string[];
+  cartIds: string[];
   busy: boolean;
   notes: string[];
   assumptions: string[];
 }
 
-export function PlanView({ rooms, shortlist, busy, notes, assumptions, ...actions }: Props) {
+export function PlanView({ rooms, shortlist, cartIds, busy, notes, assumptions, ...actions }: Props) {
   if (rooms.length === 0) {
     return <Empty title="No plan yet">Tell the assistant about your home — for example “2BHK, ₹2 lakh, minimalist”.</Empty>;
   }
@@ -28,7 +29,7 @@ export function PlanView({ rooms, shortlist, busy, notes, assumptions, ...action
           </header>
           <div className="grid gap-3 xl:grid-cols-2">
             {room.items.map((item) => (
-              <ItemCard key={item.slot_id} item={item} shortlist={shortlist} busy={busy} {...actions} />
+              <ItemCard key={item.slot_id} item={item} shortlist={shortlist} cartIds={cartIds} busy={busy} {...actions} />
             ))}
           </div>
         </section>

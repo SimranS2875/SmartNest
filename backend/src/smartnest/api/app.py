@@ -71,7 +71,9 @@ class ChatBody(BaseModel):
 class EventBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["out_of_stock", "price_change", "budget_change", "preference_change", "remove_item",
-                  "choose_product", "clear_choice"]
+                  "choose_product", "clear_choice", "cart_add", "cart_set", "cart_remove", "cart_clear",
+                  "cart_add_plan"]
+    qty: int | None = Field(default=None, ge=0, le=10)
     product_id: str | None = Field(default=None, max_length=80)
     slot_id: str | None = Field(default=None, max_length=80)
     price: float | None = Field(default=None, gt=0, le=1e9)

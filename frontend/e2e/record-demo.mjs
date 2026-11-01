@@ -46,22 +46,22 @@ const scrollTo = async (testid) => {
 await page.goto(base);
 await page.getByRole("log").waitFor();
 await caption("SmartNest: an autonomous planner that furnishes a whole home within your budget.", 5500);
-await caption("Real Google Shopping listings, honest scores, and every agent decision on screen.", 5000);
+await caption("Real Google Shopping listings, honest scores, and every agent decision on screen.", 3500);
 
 await caption("1. Describe your home in plain language.", 2500);
 await send(DEMO, 1500);
 await page.getByTestId("item-living_room.sofa").waitFor({ timeout: 90000 });
-await caption("Four specialist agents planned 10 items across 4 rooms, inside the ₹2 lakh budget.", 6000);
+await caption("Four specialist agents planned 10 items across 4 rooms, inside the ₹2 lakh budget.", 4500);
 
 await caption("2. Room by room: real products, prices, scores and links.", 3500);
 for (const id of ["living_room.sofa", "bedroom_1.bed", "bedroom_2.wardrobe", "kitchen.refrigerator"]) { await scrollTo(`item-${id}`); await hold(2200); }
 await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
 await hold(1000);
 
-await caption("Stock is only “confirmed” when the listing says so. Everything else is marked unverified.", 6000);
+await caption("Stock is only “confirmed” when the listing says so. Everything else is marked unverified.", 4500);
 const sofa = page.getByTestId("item-living_room.sofa");
 await sofa.getByRole("button", { name: "Why this?" }).click();
-await caption("“Why this?” shows the score points and which attributes the listing did not state.", 6500);
+await caption("“Why this?” shows the score points and which attributes the listing did not state.", 5000);
 await sofa.getByRole("button", { name: /Alternatives/ }).click();
 await caption("Alternatives within the item's budget. Pick one and SmartNest re-checks the budget.", 4500);
 await sofa.getByRole("button", { name: /^Use / }).first().click();
@@ -78,15 +78,28 @@ await page.getByRole("tab", { name: /Compare/ }).click();
 for (const box of await page.getByRole("checkbox").all()) { await box.check(); await hold(500); }
 await hold(5000);
 
+await caption("4. Add products to your cart. Anything over your budget is refused.", 3500);
+await page.getByRole("tab", { name: "Plan" }).click();
+await scrollTo("item-living_room.sofa");
+await page.getByTestId("item-living_room.sofa").getByRole("button", { name: "Add to cart" }).click();
+await hold(1200);
+await page.getByRole("tab", { name: /Cart/ }).click();
+await caption("The cart keeps a running total against your budget, with honest stock labels and links out to the seller.", 4500);
+await page.getByRole("button", { name: "Add all plan picks" }).click();
+await hold(1500);
+await caption("One click adds every SmartNest pick. SmartNest sells nothing: each link opens the retailer to buy.", 5000);
+await page.getByRole("button", { name: "Clear cart" }).click();
+await hold(800);
+
 await page.getByRole("tab", { name: "Budget" }).click();
-await caption("4. The budget dashboard: where every rupee goes.", 4500);
-await hold(5000);
+await caption("5. The budget dashboard: where every rupee goes.", 4500);
+await hold(3500);
 await page.evaluate(() => window.scrollTo({ top: 520, behavior: "smooth" }));
 await caption("Each item has a hard price ceiling. Unspent money stays yours.", 5000);
 await page.evaluate(() => window.scrollTo({ top: 0, behavior: "smooth" }));
 
 await page.getByRole("tab", { name: "Plan" }).click();
-await caption("5. Change your mind in chat. SmartNest replans only what is affected.", 4500);
+await caption("6. Change your mind in chat. SmartNest replans only what is affected.", 4500);
 await send("I don't need a TV unit", 3500);
 await caption("The TV unit is gone and the totals updated.", 3000);
 await send("The fridge is out of stock", 3500);
@@ -95,8 +108,8 @@ await send("Reduce the budget to 1 lakh", 4000);
 await caption("A budget cut: items are re-planned within ₹1 lakh. Nothing is forced; if it can't fit, it says so.", 6500);
 
 await page.getByRole("tab", { name: "Agents" }).click();
-await caption("6. The agent activity monitor.", 3500);
-await hold(4000);
+await caption("7. The agent activity monitor.", 3500);
+await hold(2500);
 await caption("Every request between the agents is an Ed25519-signed message, verified before any agent acts.", 7000);
 await page.evaluate(() => window.scrollTo({ top: 420, behavior: "smooth" }));
 await caption("Replanning events from the Coordinator's beliefs, desires and intentions appear in the timeline.", 7000);

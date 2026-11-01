@@ -22,7 +22,7 @@ const item = (over: Partial<PlanItem> = {}): PlanItem => ({
 });
 
 const noop = {
-  onShortlist: vi.fn(), onChoose: vi.fn(), onClearChoice: vi.fn(), onOutOfStock: vi.fn(), onRemove: vi.fn(),
+  onShortlist: vi.fn(), onChoose: vi.fn(), onClearChoice: vi.fn(), onOutOfStock: vi.fn(), onRemove: vi.fn(), onAddToCart: vi.fn(),
 };
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
@@ -50,7 +50,7 @@ describe("format", () => {
 
 describe("ItemCard", () => {
   it("shows a confirmed real listing with a safe external link", () => {
-    render(<ItemCard item={item()} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item()} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     expect(screen.getByText("Confirmed in stock")).toBeInTheDocument();
     expect(screen.getByText("Real listing")).toBeInTheDocument();
     expect(screen.getByText("₹18,628")).toBeInTheDocument();
@@ -61,14 +61,14 @@ describe("ItemCard", () => {
   });
 
   it("labels unverified stock and never calls it confirmed", () => {
-    render(<ItemCard item={item({ status: "unverified" })} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item({ status: "unverified" })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     expect(screen.getByText("Stock unverified")).toBeInTheDocument();
     expect(screen.queryByText("Confirmed in stock")).not.toBeInTheDocument();
   });
 
   it("gives simulated products no purchase link and a sample badge", () => {
     const sim = product({ simulated: true, data_origin: "simulated", buy_url: null, link_label: "Sample listing - not a real product" });
-    render(<ItemCard item={item({ product: sim })} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item({ product: sim })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     expect(screen.getByText("Sample data")).toBeInTheDocument();
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByText(/not a real product/)).toBeInTheDocument();
@@ -76,13 +76,13 @@ describe("ItemCard", () => {
 
   it("never renders a link for a simulated product even if a URL leaks in", () => {
     const sim = product({ simulated: true, buy_url: "https://evil.example" });
-    render(<ItemCard item={item({ product: sim })} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item({ product: sim })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("explains an unfilled item instead of pretending", () => {
     render(<ItemCard item={item({ product: null, status: "unfilled", why: "No sofa fits; nothing was relaxed." })}
-      shortlist={[]} busy={false} {...noop} />);
+      shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     expect(screen.getByText("Not filled")).toBeInTheDocument();
     expect(screen.getByText(/nothing was relaxed/)).toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe("ItemCard", () => {
   it("wires the actions", async () => {
     const user = userEvent.setup();
     const alt = { ...product({ product_id: "P2", name: "Pine Sofa", price: 20000 }), state: "unverified" as const, utility: 50, completeness: 0.4, gaps: [] };
-    render(<ItemCard item={item({ alternatives: [alt] })} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item({ alternatives: [alt] })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     await user.click(screen.getByRole("button", { name: "Add to shortlist" }));
     expect(noop.onShortlist).toHaveBeenCalledWith("P1");
     await user.click(screen.getByRole("button", { name: /Alternatives \(1\)/ }));
@@ -105,18 +105,18 @@ describe("ItemCard", () => {
 
   it("disables destructive actions while busy", async () => {
     const user = userEvent.setup();
-    render(<ItemCard item={item()} shortlist={[]} busy {...noop} />);
+    render(<ItemCard item={item()} shortlist={[]} cartIds={[]} busy {...noop} />);
     await user.click(screen.getByRole("button", { name: "Why this?" }));
     expect(screen.getByRole("button", { name: "Mark out of stock" })).toBeDisabled();
   });
 
   it("shows the score as an accessible meter", () => {
-    render(<ItemCard item={item()} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item()} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     expect(screen.getByRole("meter", { name: /Utility score/ })).toHaveAttribute("aria-valuenow", "59");
   });
 
   it("survives a broken image", () => {
-    render(<ItemCard item={item({ product: product({ image_url: "https://x.example/a.jpg" }) })} shortlist={[]} busy={false} {...noop} />);
+    render(<ItemCard item={item({ product: product({ image_url: "https://x.example/a.jpg" }) })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
     screen.getByRole("img", { name: "Oak Sofa" }).dispatchEvent(new Event("error"));
     return waitFor(() => expect(screen.queryByRole("img", { name: "Oak Sofa" })).not.toBeInTheDocument());
   });
@@ -219,5 +219,108 @@ describe("api client", () => {
     const spy = respond(200, {});
     await api.getSession("a/b c");
     expect(spy.mock.calls[0][0]).toBe("/api/sessions/a%2Fb%20c");
+  });
+});
+
+import { CartView, cartText } from "./components/CartView";
+import type { Cart, CartLine } from "./types";
+
+const line = (over: Partial<CartLine> = {}, prod: Partial<Product> = {}): CartLine => ({
+  product: product(prod), qty: 2, line_total: 37256, category: "sofa", status: "unverified", in_plan: true, out_of_stock: false, ...over,
+});
+
+const cartOf = (over: Partial<Cart> = {}): Cart => ({
+  lines: [line()], count: 2, total: 37256, budget: 200000, remaining: 162744, within_budget: true, unverified: 1, warnings: [], ...over,
+});
+
+const cartActions = { onSetQty: vi.fn(), onRemove: vi.fn(), onClear: vi.fn(), onAddPlan: vi.fn() };
+
+describe("ItemCard cart button", () => {
+  it("adds to the cart and shows when it is already there", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ItemCard item={item()} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
+    await user.click(screen.getByRole("button", { name: "Add to cart" }));
+    expect(noop.onAddToCart).toHaveBeenCalledWith("P1");
+    rerender(<ItemCard item={item()} shortlist={[]} cartIds={["P1"]} busy={false} {...noop} />);
+    expect(screen.getByRole("button", { name: "In cart" })).toBeDisabled();
+  });
+
+  it("can add an alternative to the cart", async () => {
+    const user = userEvent.setup();
+    const alt = { ...product({ product_id: "P2", name: "Pine Sofa" }), state: "unverified" as const, utility: 50, completeness: 0.4, gaps: [] };
+    render(<ItemCard item={item({ alternatives: [alt] })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
+    await user.click(screen.getByRole("button", { name: /Alternatives/ }));
+    await user.click(screen.getByRole("button", { name: "Add Pine Sofa to cart" }));
+    expect(noop.onAddToCart).toHaveBeenCalledWith("P2");
+  });
+});
+
+describe("CartView", () => {
+  it("shows lines, totals and honest stock labels", () => {
+    render(<CartView cart={cartOf()} busy={false} {...cartActions} />);
+    expect(screen.getAllByText("₹37,256").length).toBeGreaterThan(0);
+    expect(screen.getByText("Stock unverified", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByText("Confirmed in stock")).not.toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "Cart against budget" })).toHaveAttribute("aria-valuenow", "19");
+    expect(screen.getByText(/does not sell anything/)).toBeInTheDocument();
+  });
+
+  it("changes quantity, removes and clears", async () => {
+    const user = userEvent.setup();
+    render(<CartView cart={cartOf()} busy={false} {...cartActions} />);
+    await user.click(screen.getByRole("button", { name: "Increase quantity" }));
+    expect(cartActions.onSetQty).toHaveBeenCalledWith("P1", 3);
+    await user.click(screen.getByRole("button", { name: "Decrease quantity" }));
+    expect(cartActions.onSetQty).toHaveBeenCalledWith("P1", 1);
+    await user.click(screen.getByRole("button", { name: /Remove Oak Sofa from cart/ }));
+    expect(cartActions.onRemove).toHaveBeenCalledWith("P1");
+    await user.click(screen.getByRole("button", { name: "Clear cart" }));
+    expect(cartActions.onClear).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Add all plan picks" }));
+    expect(cartActions.onAddPlan).toHaveBeenCalled();
+  });
+
+  it("stops the quantity at ten", () => {
+    render(<CartView cart={cartOf({ lines: [line({ qty: 10 })] })} busy={false} {...cartActions} />);
+    expect(screen.getByRole("button", { name: "Increase quantity" })).toBeDisabled();
+  });
+
+  it("warns when over budget or out of stock", () => {
+    render(<CartView cart={cartOf({ within_budget: false, remaining: -5, warnings: ["The cart is over the current budget."],
+      lines: [line({ out_of_stock: true })] })} busy={false} {...cartActions} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("over the current budget");
+    expect(screen.getByText("Now out of stock")).toBeInTheDocument();
+  });
+
+  it("gives simulated lines a sample badge and no link", () => {
+    render(<CartView cart={cartOf({ lines: [line({}, { simulated: true, buy_url: null, link_label: "Sample listing - not a real product" })] })}
+      busy={false} {...cartActions} />);
+    expect(screen.getByText("Sample data")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("links real lines safely", () => {
+    render(<CartView cart={cartOf()} busy={false} {...cartActions} />);
+    const link = screen.getByRole("link", { name: /Retailer page/ });
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("explains an empty cart and disables clearing it", () => {
+    render(<CartView cart={cartOf({ lines: [], count: 0, total: 0, remaining: 200000, unverified: 0 })} busy={false} {...cartActions} />);
+    expect(screen.getByText("Your cart is empty")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear cart" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Copy buy list" })).toBeDisabled();
+  });
+
+  it("handles no plan", () => {
+    render(<CartView cart={null} busy={false} {...cartActions} />);
+    expect(screen.getByText("No cart yet")).toBeInTheDocument();
+  });
+
+  it("writes a plain-text buy list without links for sample data", () => {
+    const text = cartText(cartOf({ lines: [line(), line({}, { product_id: "S", name: "Sample", simulated: true, buy_url: null })] }));
+    expect(text).toContain("2 x Oak Sofa - ₹37,256 - https://www.wakefit.co/sofa");
+    expect(text).toContain("(sample, no link)");
+    expect(text).toContain("Total: ₹37,256 of ₹2,00,000 budget");
   });
 });
