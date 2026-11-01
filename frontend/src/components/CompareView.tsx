@@ -100,7 +100,7 @@ export function CompareView({ sessionId, items, shortlist, onToggle, cartIds, on
                 </Row>
               ))}
               <Row label="Stock">{rows.map((r) => <td key={r.product_id} className="px-4 py-2">
-                {r.state === "confirmed" ? <Badge tone="ok">Confirmed</Badge> : <Badge tone="warn">Unverified</Badge>}</td>)}</Row>
+                {r.state === "confirmed" ? <Badge tone="ok">Confirmed</Badge> : <span className="text-muted">Not stated</span>}</td>)}</Row>
               <Row label="Link">{rows.map((r) => <td key={r.product_id} className="px-4 py-2"><PurchaseLink product={r} /></td>)}</Row>
             </tbody>
           </table>

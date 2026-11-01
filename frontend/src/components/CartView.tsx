@@ -26,7 +26,7 @@ function Line({ line, busy, onSetQty, onRemove }: { line: CartLine; busy: boolea
     <li className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3" data-testid={`cart-${p.product_id}`}>
       <div className="min-w-0 flex-1 basis-64">
         <div className="flex flex-wrap items-center gap-1.5">
-          {line.status === "confirmed" ? <Badge tone="ok">Confirmed in stock</Badge> : <Badge tone="warn">Stock unverified</Badge>}
+          {line.status === "confirmed" && <Badge tone="ok">Confirmed in stock</Badge>}
           {line.out_of_stock && <Badge tone="bad">Now out of stock</Badge>}
           {p.simulated && <Badge tone="bad">Sample data</Badge>}
           {!line.in_plan && <Badge>Not a plan pick</Badge>}
@@ -58,11 +58,10 @@ export function CartView({ cart, busy, onSetQty, onRemove, onClear, onAddPlan }:
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat label="Cart total" value={inr(cart.total)} tone={cart.within_budget ? undefined : "bad"} />
         <Stat label="Budget left" value={inr(cart.remaining)} tone={cart.within_budget ? "ok" : "bad"} />
         <Stat label="Products" value={cart.count} hint={`${cart.lines.length} line(s)`} />
-        <Stat label="Stock unverified" value={cart.unverified} hint="check the retailer before buying" />
       </div>
       <div className="h-2.5 overflow-hidden rounded-full bg-track" role="meter" aria-label="Cart against budget"
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)}>
