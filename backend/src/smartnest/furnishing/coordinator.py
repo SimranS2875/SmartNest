@@ -24,6 +24,7 @@ Honesty rules carried over from the rest of SmartNest
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -392,8 +393,12 @@ class FurnishingCoordinator(CartMixin):
                 open_ids.discard(slot.slot_id)
                 self.log.record("budget", "decision", f"{slot.label}: filled from the leftover budget ({inr(room)} available)")
 
+        minimum_total, cheapest = None, {}
+        if open_ids:
+            minimum_total, cheapest = self._rebalance_if_feasible(pool, results, ceilings, open_ids, budget, req)
         self._apply_choices(slots, results, budget)
 
+        spent_all = round(sum(r["selected"]["price"] for r in results.values() if r.get("selected")), 2)
         lines: dict[str, dict[str, Any]] = {}
         prices: dict[str, float] = {}
         for slot in slots:
@@ -406,15 +411,23 @@ class FurnishingCoordinator(CartMixin):
                     "dropped_accessories": len(research["dropped"]), "data_origin": research["origin"],
                     "rejected_examples": res.get("rejected_examples", [])}
             line["no_data"] = not research["records"]
+            line["cheapest_price"] = cheapest.get(slot.slot_id)
             line["search_query"] = slot.profile.search_query(req.themes)
             if sel is None and line["no_data"]:
                 line.update(status="unfilled", product=None, utility=None, completeness=None, alternatives=[],
                             why=(f"SmartNest has no {slot.profile.label.lower()} listings yet, so it cannot recommend one. "
                                  f"A live search for \"{line['search_query']}\" would find some."))
             elif sel is None:
+                low = cheapest.get(slot.slot_id)
+                left = round(budget - spent_all, 2)
+                if low is not None:
+                    why = (f"The cheapest {slot.profile.label.lower()} listing costs {inr(low)}, but only "
+                           f"{inr(max(left, 0))} of your budget is left after the other items.")
+                else:
+                    why = (f"No {slot.profile.label.lower()} listing fits this item's limits "
+                           f"({res.get('inspected', 0)} checked).")
                 line.update(status="unfilled", product=None, utility=None, completeness=None, alternatives=[],
-                            why=(f"No {slot.profile.label.lower()} could be chosen within {inr(ceilings[slot.slot_id])}"
-                                 f" from {res.get('inspected', 0)} listing(s); nothing was relaxed to force a match."))
+                            why=why + " Nothing was relaxed to force a match.")
             else:
                 prices[slot.slot_id] = float(sel["price"])
                 line.update(status=sel["state"], user_choice=bool(res.get("user_choice")), product=_product_view(sel), utility=sel["utility"],
@@ -432,6 +445,10 @@ class FurnishingCoordinator(CartMixin):
         summary["unfilled_count"] = sum(1 for ln in lines.values() if ln["status"] == "unfilled")
         summary["items"] = len(lines)
         summary["no_data_count"] = sum(1 for ln in lines.values() if ln["no_data"])
+        summary["minimum_total"] = minimum_total
+        summary["shortfall"] = round(max(0.0, (minimum_total or 0) - budget), 2) if minimum_total else 0.0
+        summary["budget_needed"] = (math.ceil(minimum_total / 500) * 500 if minimum_total and summary["shortfall"] > 0
+                                    else None)
         summary["themes"] = list(req.themes)
         summary["themed_items"] = sum(1 for ln in lines.values() if (ln.get("product") or {}).get("theme_matches"))
         self.log.record("budget", "decision", f"spend Rs {summary['spent']:,.0f} of Rs {budget:,.0f} "
@@ -441,6 +458,46 @@ class FurnishingCoordinator(CartMixin):
         self._record_transitions(previous, lines)
         version = (self.plan.version + 1) if self.plan else 1
         return Plan(req, self._assumptions, self._rooms, lines, summary, notes, version)
+
+    def _rebalance_if_feasible(self, pool: list[Slot], results: dict[str, dict[str, Any]], ceilings: dict[str, float],
+                               open_ids: set[str], budget: float, req: FurnishingRequest) -> tuple[float, dict[str, float]]:
+        """Some buyable item is still unfilled.  Find what every item costs at minimum.
+
+        If the minimums fit inside the budget, a different split of the money makes every item buyable: each item
+        gets its own minimum plus a share of the slack, so re-select with those ceilings.  If they do not fit, the
+        budget is genuinely too small; nothing is relaxed and the cheapest total is reported so the user can decide.
+        """
+        cheapest: dict[str, float] = {}
+        for slot in pool:
+            res = self.bus.call("comparison", "cheapest", {
+                "slot": slot.to_dict(), "records": self._research[slot.profile.id]["records"],
+                "overrides": self._overrides}, summary=f"asked Comparison for the lowest price of {slot.label}")
+            if res["cheapest"] is not None:
+                cheapest[slot.slot_id] = float(res["cheapest"])
+        minimum_total = round(sum(cheapest.values()), 2)
+        if minimum_total > budget + 1e-9:
+            self.log.record("budget", "decision", f"even the cheapest choices total ₹{minimum_total:,.0f}, over the "
+                            f"₹{budget:,.0f} budget; nothing is relaxed")
+            return minimum_total, cheapest
+        slack = budget - minimum_total
+        feasible = [s for s in pool if s.slot_id in cheapest]
+        weight = sum(s.profile.default_weight for s in feasible)
+        for slot in feasible:
+            share = slack * slot.profile.default_weight / weight
+            ceilings[slot.slot_id] = math.floor((cheapest[slot.slot_id] + share) * 100) / 100
+        self.log.record("budget", "decision", f"cheapest choices total ₹{minimum_total:,.0f} (fits); re-sharing the "
+                        f"₹{slack:,.0f} of slack over the items")
+        open_ids.clear()
+        for slot in feasible:
+            res = self.bus.call("comparison", "compare", {
+                "slot": slot.to_dict(), "ceiling": ceilings[slot.slot_id],
+                "records": self._research[slot.profile.id]["records"], "style": req.style, "colour": req.colour,
+                "overrides": self._overrides, "themes": list(req.themes), "audience": req.audience},
+                summary=f"asked Comparison to re-rank {slot.label} under ₹{ceilings[slot.slot_id]:,.0f}")
+            results[slot.slot_id] = res
+            if res["selected"] is None:
+                open_ids.add(slot.slot_id)
+        return minimum_total, cheapest
 
     def _apply_choices(self, slots: list[Slot], results: dict[str, dict[str, Any]], budget: float) -> None:
         """Let the user's own picks replace the automatic ones - only if the optimizer still accepts them and the

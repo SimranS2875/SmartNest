@@ -365,3 +365,32 @@ describe("items without listings and themes", () => {
     expect(screen.getByText("Not filled")).toBeInTheDocument();
   });
 });
+
+describe("an item that does not fit the budget", () => {
+  const tight = () => item({ product: null, status: "unfilled", category: "wardrobe", category_label: "Wardrobe", cheapest_price: 12319,
+    why: "The cheapest wardrobe listing costs ₹12,319, but only ₹7,249 of your budget is left." });
+
+  it("explains itself and offers the two ways out", async () => {
+    const user = userEvent.setup();
+    const onRaise = vi.fn();
+    render(<ItemCard item={tight()} shortlist={[]} cartIds={[]} busy={false} raiseTo={30000} onRaiseBudget={onRaise} {...noop} />);
+    expect(screen.getByText(/cheapest wardrobe listing costs ₹12,319/)).toBeInTheDocument();
+    expect(screen.getByText("Cheapest listing: ₹12,319")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Raise budget to ₹30,000" }));
+    expect(onRaise).toHaveBeenCalledWith(30000);
+    await user.click(screen.getByRole("button", { name: "Remove Wardrobe from the plan" }));
+    expect(noop.onRemove).toHaveBeenCalledWith("living_room.sofa");
+  });
+
+  it("offers no budget button when raising the budget would not help", () => {
+    render(<ItemCard item={tight()} shortlist={[]} cartIds={[]} busy={false} raiseTo={null} onRaiseBudget={vi.fn()} {...noop} />);
+    expect(screen.queryByRole("button", { name: /Raise budget/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Remove Wardrobe/ })).toBeInTheDocument();
+  });
+
+  it("locks both actions while busy", () => {
+    render(<ItemCard item={tight()} shortlist={[]} cartIds={[]} busy raiseTo={30000} onRaiseBudget={vi.fn()} {...noop} />);
+    expect(screen.getByRole("button", { name: /Raise budget/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Remove Wardrobe/ })).toBeDisabled();
+  });
+});

@@ -161,6 +161,8 @@ export default function App() {
             {tab === "plan" && (
               <PlanView rooms={session?.rooms ?? []} shortlist={session?.shortlist ?? []} busy={busy}
                 cartIds={cartIds} onAddToCart={addToCart} live={health?.live_search} onSearch={searchLive}
+                budgetNeeded={plan?.summary.budget_needed}
+                onRaiseBudget={(total_budget) => event({ type: "budget_change", total_budget })}
                 notes={plan?.data_notes ?? []} assumptions={plan?.assumptions ?? []}
                 onShortlist={toggleShortlist}
                 onChoose={(slot_id, product_id) => event({ type: "choose_product", slot_id, product_id })}

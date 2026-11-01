@@ -19,6 +19,8 @@ interface Props extends ItemActions {
   cartIds: string[];
   busy: boolean;
   live?: LiveStatus;
+  raiseTo?: number | null;                       // the budget that would fit every item at its cheapest
+  onRaiseBudget?: (amount: number) => void;
 }
 
 function Thumb({ src, name }: { src: string | null; name: string }) {
@@ -65,7 +67,7 @@ function AlternativeRow({ alt, slotId, busy, inCart, onChoose, onAddToCart }: { 
   );
 }
 
-export function ItemCard({ item, shortlist, cartIds, busy, live, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove, onAddToCart, onSearch }: Props) {
+export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRaiseBudget, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove, onAddToCart, onSearch }: Props) {
   const [open, setOpen] = useState<"" | "alts" | "why">("");
   const p = item.product;
 
@@ -93,7 +95,13 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, onShortlist, on
             </span>
           </div>
         ) : (
-          <div className="mt-2 text-xs text-muted">Budget ceiling for this item: {inr(item.ceiling)}</div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {raiseTo && onRaiseBudget && (
+              <Button variant="primary" disabled={busy} onClick={() => onRaiseBudget(raiseTo)}>Raise budget to {inr(raiseTo)}</Button>
+            )}
+            <Button disabled={busy} onClick={() => onRemove(item.slot_id)} aria-label={`Remove ${item.category_label} from the plan`}>Remove item</Button>
+            {item.cheapest_price != null && <span className="text-xs text-muted">Cheapest listing: {inr(item.cheapest_price)}</span>}
+          </div>
         )}
       </article>
     );

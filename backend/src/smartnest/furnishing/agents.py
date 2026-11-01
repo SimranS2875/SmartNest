@@ -108,6 +108,8 @@ class ComparisonAgent:
         self._optimizer = UtilityOptimizer()
 
     def handle(self, task: str, data: dict[str, Any]) -> dict[str, Any]:
+        if task == "cheapest":
+            return self._cheapest(data)
         if task != "compare":
             raise ValueError(f"unknown task {task!r}")
         slot = Slot.from_dict(data["slot"])
@@ -144,6 +146,23 @@ class ComparisonAgent:
                 "eligible": result.eligible_count, "unverified": result.unverified_count,
                 "rejected": result.rejected_count, "rejected_examples": rejected, "explanation": result.explanation,
                 "ceiling": ceiling, "themed": bool(themes and any(o["theme_matches"] for o in options))}
+
+
+    def _cheapest(self, data: dict[str, Any]) -> dict[str, Any]:
+        """The lowest price among options that could be bought for this item (confirmed or unverified), ignoring any
+        budget ceiling: what the item costs at minimum.  ``None`` if no listing is valid for it at all."""
+        slot = Slot.from_dict(data["slot"])
+        records = [dict(r) for r in data["records"]]
+        overrides: dict[str, dict[str, Any]] = data.get("overrides") or {}
+        for record in records:
+            record.update(overrides.get(record["product_id"], {}))
+        if not records:
+            return {"slot_id": slot.slot_id, "cheapest": None}
+        requirements = {"budget": 1e9, "min_seating": slot.min_seating if slot.profile.needs_seating else 1,
+                        "max_width_cm": slot.max_width_cm, "max_depth_cm": slot.max_depth_cm}
+        result = self._optimizer.optimize(records, requirements)
+        prices = [e.price for e in (*result.ranking, *result.unverified) if e.price is not None]
+        return {"slot_id": slot.slot_id, "cheapest": min(prices) if prices else None}
 
 
 class BudgetAgent:
