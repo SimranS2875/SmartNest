@@ -283,6 +283,76 @@ class ChatAssistant:
                                                 if ln.get("product") else "not filled") for ln in lines) + ".", "overview")
         return Reply(self.describe_plan(session.plan), "overview")
 
+    # ── Cart ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _cart_line(cart: dict[str, Any]) -> str:
+        return (f"Your cart has {cart['count']} item(s) totalling {inr(cart['total'])} "
+                f"({inr(cart['remaining'])} of your budget left)."
+                + (f" Stock is unconfirmed for {cart['unverified']} line(s)." if cart["unverified"] else ""))
+
+    def _picks_for(self, session: HomeSession, p: ParsedMessage) -> list[tuple[str, str]]:
+        """(slot id, product id) for the plan items the message refers to."""
+        return [(sid, session.plan.lines[sid]["product"]["product_id"])
+                for sid in self._slots_matching(session, p)
+                if session.plan.lines.get(sid) and session.plan.lines[sid].get("product")]
+
+    def _do_cart_add(self, session: HomeSession, p: ParsedMessage) -> Reply:
+        if (r := self._need_plan(session)):
+            return r
+        co = session.coordinator
+        wants_all = bool(re.search(r"\b(everything|all|whole|entire)\b", p.text, re.IGNORECASE)) and not p.categories
+        if wants_all and not p.room:
+            session.apply({"type": "cart_add_plan"})
+            return Reply("Added every chosen product to your cart. " + self._cart_line(co.cart_view()), "cart_add", changed=True)
+        picks = self._picks_for(session, p) if (p.categories or p.room) else []
+        if not picks:
+            return Reply("Which item should I add? For example: \"add the sofa to my cart\" or \"add everything to my cart\".",
+                         "cart_add")
+        added, already = [], []
+        for sid, pid in picks:
+            if pid in co.cart or pid in [a[1] for a in added]:
+                already.append(session.plan.lines[sid]["category_label"].lower())
+                continue
+            session.apply({"type": "cart_add", "product_id": pid, "qty": 1})
+            added.append((sid, pid))
+        text = ""
+        if added:
+            text += "Added to your cart: " + ", ".join(session.plan.lines[s]["product"]["name"][:50] for s, _ in added) + ". "
+        if already:
+            text += f"Already in your cart: {', '.join(sorted(set(already)))}. "
+        return Reply(text + self._cart_line(co.cart_view()), "cart_add", changed=bool(added))
+
+    def _do_cart_remove(self, session: HomeSession, p: ParsedMessage) -> Reply:
+        if (r := self._need_plan(session)):
+            return r
+        co = session.coordinator
+        gone = []
+        for _, pid in (self._picks_for(session, p) if (p.categories or p.room) else []):
+            if pid in co.cart:
+                session.apply({"type": "cart_remove", "product_id": pid})
+                gone.append(pid)
+        if not gone:
+            return Reply("That isn't in your cart.", "cart_remove")
+        return Reply("Removed from your cart. " + self._cart_line(co.cart_view()), "cart_remove", changed=True)
+
+    def _do_cart_clear(self, session: HomeSession, p: ParsedMessage) -> Reply:
+        if (r := self._need_plan(session)):
+            return r
+        if not session.coordinator.cart:
+            return Reply("Your cart is already empty.", "cart_clear")
+        session.apply({"type": "cart_clear"})
+        return Reply("Your cart is empty.", "cart_clear", changed=True)
+
+    def _do_cart_show(self, session: HomeSession, p: ParsedMessage) -> Reply:
+        if (r := self._need_plan(session)):
+            return r
+        cart = session.coordinator.cart_view()
+        if not cart["lines"]:
+            return Reply("Your cart is empty. Say \"add everything to my cart\" or press Add to cart on a product.", "cart_show")
+        rows = "; ".join(f"{ln['qty']} x {ln['product']['name'][:40]} ({inr(ln['line_total'])})" for ln in cart["lines"][:6])
+        return Reply(f"{rows}. " + self._cart_line(cart), "cart_show")
+
     # ── Wording ──────────────────────────────────────────────────────────
 
     @staticmethod

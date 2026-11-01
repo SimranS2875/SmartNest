@@ -9,11 +9,13 @@ export interface ItemActions {
   onClearChoice: (slotId: string) => void;
   onOutOfStock: (productId: string) => void;
   onRemove: (slotId: string) => void;
+  onAddToCart: (productId: string) => void;
 }
 
 interface Props extends ItemActions {
   item: PlanItem;
   shortlist: string[];
+  cartIds: string[];
   busy: boolean;
 }
 
@@ -42,7 +44,7 @@ export function PurchaseLink({ product }: { product: { buy_url: string | null; l
   );
 }
 
-function AlternativeRow({ alt, slotId, busy, onChoose }: { alt: Alternative; slotId: string; busy: boolean; onChoose: Props["onChoose"] }) {
+function AlternativeRow({ alt, slotId, busy, inCart, onChoose, onAddToCart }: { alt: Alternative; slotId: string; busy: boolean; inCart: boolean; onChoose: Props["onChoose"]; onAddToCart: Props["onAddToCart"] }) {
   return (
     <li className="flex items-center justify-between gap-3 py-2 text-sm">
       <div className="min-w-0">
@@ -55,12 +57,13 @@ function AlternativeRow({ alt, slotId, busy, onChoose }: { alt: Alternative; slo
       <div className="flex shrink-0 items-center gap-2">
         <span className="tabular-nums font-medium">{inr(alt.price)}</span>
         <Button disabled={busy} onClick={() => onChoose(slotId, alt.product_id)} aria-label={`Use ${alt.name}`}>Use this</Button>
+        <Button disabled={busy || inCart} onClick={() => onAddToCart(alt.product_id)} aria-label={`Add ${alt.name} to cart`}>{inCart ? "✓ In cart" : "Add to cart"}</Button>
       </div>
     </li>
   );
 }
 
-export function ItemCard({ item, shortlist, busy, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove }: Props) {
+export function ItemCard({ item, shortlist, cartIds, busy, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove, onAddToCart }: Props) {
   const [open, setOpen] = useState<"" | "alts" | "why">("");
   const p = item.product;
 
@@ -80,6 +83,7 @@ export function ItemCard({ item, shortlist, busy, onShortlist, onChoose, onClear
   }
 
   const starred = shortlist.includes(p.product_id);
+  const inCart = cartIds.includes(p.product_id);
   return (
     <article className="rounded-xl border border-line bg-card p-4 shadow-sm" data-testid={`item-${item.slot_id}`}>
       <div className="flex gap-4">
@@ -113,6 +117,9 @@ export function ItemCard({ item, shortlist, busy, onShortlist, onChoose, onClear
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <PurchaseLink product={p} />
         <div className="flex flex-wrap gap-1.5">
+          <Button variant="primary" disabled={busy || inCart} onClick={() => onAddToCart(p.product_id)} aria-label={inCart ? "In cart" : "Add to cart"}>
+            {inCart ? "✓ In cart" : "Add to cart"}
+          </Button>
           <Button onClick={() => onShortlist(p.product_id)} aria-pressed={starred} aria-label={starred ? "Remove from shortlist" : "Add to shortlist"}>
             {starred ? "★ Shortlisted" : "☆ Shortlist"}
           </Button>
@@ -148,7 +155,7 @@ export function ItemCard({ item, shortlist, busy, onShortlist, onChoose, onClear
       {open === "alts" && (
         <ul className="mt-3 divide-y divide-line rounded-lg border border-line px-3">
           {item.alternatives.length === 0 && <li className="py-3 text-sm text-muted">No other option fits this item's budget.</li>}
-          {item.alternatives.map((a) => <AlternativeRow key={a.product_id} alt={a} slotId={item.slot_id} busy={busy} onChoose={onChoose} />)}
+          {item.alternatives.map((a) => <AlternativeRow key={a.product_id} alt={a} slotId={item.slot_id} busy={busy} inCart={cartIds.includes(a.product_id)} onChoose={onChoose} onAddToCart={onAddToCart} />)}
         </ul>
       )}
     </article>

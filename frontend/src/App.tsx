@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "./api";
 import { AgentsView } from "./components/AgentsView";
 import { ChatPanel } from "./components/ChatPanel";
+import { CartView } from "./components/CartView";
 import { CompareView } from "./components/CompareView";
 import { PlanView } from "./components/PlanView";
 import { timeAgo } from "./format";
@@ -15,6 +16,7 @@ const TABS = [
   { id: "plan", label: "Plan" },
   { id: "budget", label: "Budget" },
   { id: "compare", label: "Compare" },
+  { id: "cart", label: "Cart" },
   { id: "agents", label: "Agents" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
@@ -70,12 +72,14 @@ export default function App() {
     await api.shortlist(sid, productId);
     setSession(await api.getSession(sid));
   });
+  const addToCart = (product_id: string) => event({ type: "cart_add", product_id });
   const newSession = () => guarded(async () => {
     const fresh = await api.createSession();
     setSession(fresh); remember(fresh.id); setTab("plan");
   });
 
   const plan = session?.plan ?? null;
+  const cartIds = (session?.cart?.lines ?? []).map((l) => l.product.product_id);
   const origins = catalog?.categories ?? [];
   const real = origins.filter((c) => c.origin === "serpapi");
   const oldest = real.map((c) => c.retrieved_at).filter(Boolean).sort()[0] ?? null;
@@ -120,12 +124,13 @@ export default function App() {
         </aside>
 
         <section aria-label="Workspace" className="min-w-0">
-          <div role="tablist" aria-label="Views" className="mb-4 flex gap-1 border-b border-line">
+          <div role="tablist" aria-label="Views" className="scroll-thin mb-4 flex gap-1 overflow-x-auto border-b border-line">
             {TABS.map((t) => (
               <button key={t.id} role="tab" id={`tab-${t.id}`} aria-selected={tab === t.id} aria-controls={`panel-${t.id}`}
                 onClick={() => setTab(t.id)}
-                className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${tab === t.id ? "border-brand text-brand-dark" : "border-transparent text-muted hover:text-ink"}`}>
+                className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium sm:px-4 ${tab === t.id ? "border-brand text-brand-dark" : "border-transparent text-muted hover:text-ink"}`}>
                 {t.label}
+                {t.id === "cart" && session?.cart && session.cart.count > 0 && <span className="ml-1.5 rounded-full bg-brand-soft px-1.5 text-xs">{session.cart.count}</span>}
                 {t.id === "compare" && session && session.shortlist.length > 0 && <span className="ml-1.5 rounded-full bg-brand-soft px-1.5 text-xs">{session.shortlist.length}</span>}
               </button>
             ))}
@@ -133,6 +138,7 @@ export default function App() {
           <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
             {tab === "plan" && (
               <PlanView rooms={session?.rooms ?? []} shortlist={session?.shortlist ?? []} busy={busy}
+                cartIds={cartIds} onAddToCart={addToCart}
                 notes={plan?.data_notes ?? []} assumptions={plan?.assumptions ?? []}
                 onShortlist={toggleShortlist}
                 onChoose={(slot_id, product_id) => event({ type: "choose_product", slot_id, product_id })}
@@ -146,7 +152,15 @@ export default function App() {
               </Suspense>
             )}
             {tab === "compare" && sid && (
-              <CompareView sessionId={sid} items={plan?.items ?? []} shortlist={session?.shortlist ?? []} onToggle={toggleShortlist} />
+              <CompareView sessionId={sid} items={plan?.items ?? []} shortlist={session?.shortlist ?? []} onToggle={toggleShortlist}
+                cartIds={cartIds} onAddToCart={addToCart} />
+            )}
+            {tab === "cart" && (
+              <CartView cart={session?.cart ?? null} busy={busy}
+                onSetQty={(product_id, qty) => event({ type: "cart_set", product_id, qty })}
+                onRemove={(product_id) => event({ type: "cart_remove", product_id })}
+                onClear={() => event({ type: "cart_clear" })}
+                onAddPlan={() => event({ type: "cart_add_plan" })} />
             )}
             {tab === "agents" && sid && <AgentsView sessionId={sid} refreshKey={pulse} />}
           </div>

@@ -49,7 +49,7 @@ def session_view(session: HomeSession) -> dict[str, Any]:
     return {
         "id": session.id, "created_at": session.created_at, "has_plan": plan is not None,
         "plan": plan.to_dict() if plan else None, "rooms": room_view(session), "budget": budget_view(session),
-        "shortlist": list(co.shortlist), "transitions": co.transitions[-60:], "history": session.history[-60:],
+        "shortlist": list(co.shortlist), "cart": co.cart_view() if plan else None, "transitions": co.transitions[-60:], "history": session.history[-60:],
         "draft": session.draft,
     }
 

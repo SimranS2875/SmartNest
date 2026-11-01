@@ -4,7 +4,7 @@ import { Button } from "../ui";
 
 const DEMO = "I just moved into a 2BHK apartment. My furnishing budget is ₹2 lakh. I prefer minimalist furniture. Help me furnish the entire apartment.";
 const SUGGESTIONS_NO_PLAN = [DEMO];
-const SUGGESTIONS_PLAN = ["Why this sofa?", "How much is left?", "Show bedroom 2", "I don't need a TV unit", "Increase the budget to 3 lakh"];
+const SUGGESTIONS_PLAN = ["Why this sofa?", "How much is left?", "Show bedroom 2", "I don't need a TV unit", "Increase the budget to 3 lakh", "Add everything to my cart"];
 
 interface Props {
   history: ChatMessage[];

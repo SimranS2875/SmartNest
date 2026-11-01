@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2148 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 242 for the furnishing layer, chat, API and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2197 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 291 for the furnishing layer, chat, API, cart and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1011,6 +1011,23 @@ remains for single-item flows. The architecture diagram is [docs/architecture.sv
 Events: out of stock, price change, budget change, preference change, remove item, choose product (the user's own pick:
 accepted only if the optimizer still accepts it and the total stays inside the budget, otherwise refused with a reason).
 
+### Shopping cart
+A buy list the user fills from **any listing SmartNest has found** (a plan pick, an alternative, a shortlisted product, or
+any other listing in a category) with a quantity of 1 to 10 per product. SmartNest sells nothing and has no checkout:
+each line links out to the retailer (or the labelled Google Shopping page) and the cart keeps a running total.
+* Rules (`furnishing/cart.py`): only found products; no product known to be out of stock; **the cart total can never
+  exceed the total budget** (an addition that would is refused with the exact shortfall and the cart is left untouched);
+  stock stays "unverified" unless the listing states it; sample data has no link.
+* Later events never silently edit the cart: after a budget cut, a price change or an out-of-stock event the cart view
+  reports what no longer holds (over budget, now out of stock) and the user decides. Reducing a cart is always allowed.
+* Events: `cart_add`, `cart_set`, `cart_remove`, `cart_clear`, `cart_add_plan` (sets each plan pick to its count, so it is
+  idempotent; both bedrooms sharing a bed gives quantity 2). Cart events do not re-plan. They are stored in the session's
+  event list, so the cart survives a restart like the plan.
+* Chat: "add the sofa to my cart", "add the bed in bedroom 1 to cart", "add everything to my cart", "show my cart",
+  "remove the sofa from my cart", "clear my cart". An unclear item is asked about, never guessed.
+* Interface: **Add to cart** on every plan item, alternative and shortlist row; a **Cart** tab with quantity steppers,
+  totals against the budget, warnings, "Add all plan picks", "Clear cart" and "Copy buy list" (plain text with links).
+
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
   budget). Missing ratings, sizes, styles and colours stay missing and are listed as "not stated".
@@ -1045,7 +1062,7 @@ Sessions are stored as `{request, events}` and rebuilt by replay (planning is de
   snapshot with unaltered name, price, seller and link; skipped if no snapshots).
 * `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
   chat panel, budget view, API client errors.
-* `node e2e/demo.mjs` (frontend, Playwright against the running stack): 17 checks from the demo message to the agent
+* `node e2e/demo.mjs` (frontend, Playwright against the running stack): 23 checks from the demo message to the agent
   monitor, a page reload and the mobile layout.
 * `node e2e/record-demo.mjs` records the ~3 minute captioned demo to `docs/demo/smartnest-demo.webm`;
   the narration is in [docs/DEMO_SCRIPT.md](../docs/DEMO_SCRIPT.md).

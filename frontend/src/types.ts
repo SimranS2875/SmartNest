@@ -118,6 +118,27 @@ export interface Transition {
   reason: string;
 }
 
+export interface CartLine {
+  product: Product;
+  qty: number;
+  line_total: number;
+  category: string | null;
+  status: "confirmed" | "unverified";
+  in_plan: boolean;
+  out_of_stock: boolean;
+}
+
+export interface Cart {
+  lines: CartLine[];
+  count: number;
+  total: number;
+  budget: number;
+  remaining: number;
+  within_budget: boolean;
+  unverified: number;
+  warnings: string[];
+}
+
 export interface SessionView {
   id: string;
   created_at: string;
@@ -126,6 +147,7 @@ export interface SessionView {
   rooms: RoomView[];
   budget: BudgetView | null;
   shortlist: string[];
+  cart: Cart | null;
   transitions: Transition[];
   history: ChatMessage[];
   draft: Record<string, unknown>;
@@ -214,4 +236,9 @@ export type EventBody =
   | { type: "remove_item"; slot_id: string }
   | { type: "choose_product"; slot_id: string; product_id: string }
   | { type: "clear_choice"; slot_id: string }
+  | { type: "cart_add"; product_id: string; qty?: number }
+  | { type: "cart_set"; product_id: string; qty: number }
+  | { type: "cart_remove"; product_id: string }
+  | { type: "cart_clear" }
+  | { type: "cart_add_plan" }
   | { type: "preference_change"; style?: string | null; colour?: string | null };
