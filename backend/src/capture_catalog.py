@@ -117,6 +117,7 @@ def main() -> int:
             text = {"sofa": "3 seater minimalist sofa"}.get(cat) or QUERIES[cat]
             result = provider.discover(ProductQuery(category=text.replace("3 seater minimalist ", ""),
                                                     min_seating=3 if cat == "sofa" else None,
+                                                    max_price=30000 if cat == "sofa" else None,
                                                     style="minimalist" if cat == "sofa" else None))
             if result.api_calls:
                 print(f"  {cat}: unexpectedly needed {result.api_calls} API call(s)")
