@@ -1,5 +1,5 @@
 import { inr } from "../format";
-import type { RoomView } from "../types";
+import type { LiveStatus, RoomView } from "../types";
 import { Badge, Empty } from "../ui";
 import { ItemCard, type ItemActions } from "./ItemCard";
 
@@ -10,11 +10,12 @@ interface Props extends ItemActions {
   busy: boolean;
   notes: string[];
   assumptions: string[];
+  live?: LiveStatus;
 }
 
-export function PlanView({ rooms, shortlist, cartIds, busy, notes, assumptions, ...actions }: Props) {
+export function PlanView({ rooms, shortlist, cartIds, busy, notes, assumptions, live, ...actions }: Props) {
   if (rooms.length === 0) {
-    return <Empty title="No plan yet">Tell the assistant about your home — for example “2BHK, ₹2 lakh, minimalist”.</Empty>;
+    return <Empty title="No plan yet">Tell the assistant what to furnish — for example “2BHK, ₹2 lakh, minimalist” or “my son's bedroom under 50000”.</Empty>;
   }
   return (
     <div className="space-y-6">
@@ -29,7 +30,7 @@ export function PlanView({ rooms, shortlist, cartIds, busy, notes, assumptions, 
           </header>
           <div className="grid gap-3 xl:grid-cols-2">
             {room.items.map((item) => (
-              <ItemCard key={item.slot_id} item={item} shortlist={shortlist} cartIds={cartIds} busy={busy} {...actions} />
+              <ItemCard key={item.slot_id} item={item} shortlist={shortlist} cartIds={cartIds} busy={busy} live={live} {...actions} />
             ))}
           </div>
         </section>

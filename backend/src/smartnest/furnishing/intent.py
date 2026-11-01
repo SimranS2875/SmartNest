@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from smartnest.furnishing.categories import CATEGORIES
+from smartnest.furnishing.brief import guess_bare_budget, parse_audience, parse_limit_phrase, parse_scope, parse_themes
 from smartnest.furnishing.rooms import parse_home_type
 
 STYLES = ("minimalist", "minimal", "modern", "contemporary", "classic", "traditional", "scandinavian", "industrial",
@@ -27,6 +28,10 @@ CATEGORY_WORDS: dict[str, tuple[str, ...]] = {
     "sofa": ("sofa", "couch", "settee"), "tv_unit": ("tv unit", "tv stand", "tv cabinet", "television unit", "tv"),
     "bed": ("bed", "cot"), "mattress": ("mattress",), "wardrobe": ("wardrobe", "closet", "almirah"),
     "dining_table": ("dining table", "dining set", "dining"), "refrigerator": ("refrigerator", "fridge"),
+    "kids_bed": ("kids bed", "kid's bed", "kids' bed", "child's bed", "children's bed", "single bed", "bunk bed", "cot"),
+    "study_table": ("study table", "study desk", "desk", "writing table", "computer table"),
+    "bookshelf": ("bookshelf", "bookshelves", "bookcase", "book shelf", "book rack", "bookrack"),
+    "wall_decor": ("wall decor", "wall art", "wall poster", "poster", "posters", "wall stickers", "decor"),
 }
 
 _NUM = r"(\d[\d,]*(?:\.\d+)?)"
@@ -55,7 +60,7 @@ def parse_money(text: str) -> float | None:
                 return _number(match.group(1))
             except ValueError:
                 return None
-    return None
+    return parse_limit_phrase(text)
 
 
 def parse_style(text: str) -> str | None:
@@ -84,6 +89,8 @@ def categories_in(text: str) -> list[str]:
                 # 'bed' must not match inside 'bedroom'; \b already prevents that
                 found.append(cat)
                 break
+    if "kids_bed" in found and "bed" in found:      # "kid's bed" is one thing, not a bed plus a kid's bed
+        found.remove("bed")
     return found
 
 
@@ -112,6 +119,10 @@ class ParsedMessage:
     colour: str | None = None
     categories: list[str] = field(default_factory=list)
     room: str | None = None
+    scope: list[str] = field(default_factory=list)       # rooms to furnish when no home type is given
+    audience: str | None = None                          # child / teen / adult
+    age: int | None = None
+    themes: list[str] = field(default_factory=list)      # interests that steer wall decor etc.
     action: str = "unknown"      # cart_add | cart_remove | cart_clear | cart_show | new_request | set_budget | set_preference | remove_item | out_of_stock |
                                  # why | budget_status | overview | compare | help | unknown
     notes: list[str] = field(default_factory=list)
@@ -139,12 +150,16 @@ def parse_message(text: str, *, has_plan: bool) -> ParsedMessage:
     text = (text or "").strip()
     parsed = ParsedMessage(text=text, bedrooms=parse_home_type(text), budget=parse_money(text),
                            style=parse_style(text), colour=parse_colour(text), categories=categories_in(text),
-                           room=room_in(text))
+                           room=room_in(text), scope=parse_scope(text), themes=parse_themes(text))
+    parsed.audience, parsed.age = parse_audience(text)
     if not text:
         parsed.action = "help"
         return parsed
     if not has_plan:
-        parsed.action = "new_request" if (parsed.bedrooms or parsed.budget) else "help"
+        if parsed.budget is None and (parsed.bedrooms or parsed.scope):
+            parsed.budget = guess_bare_budget(text)           # "set up my study, 25000"
+        brief = parsed.bedrooms or parsed.scope or parsed.budget or parsed.themes
+        parsed.action = "new_request" if brief else "help"
         return parsed
     if _CART.search(text):
         if _CLEAR.search(text):
@@ -155,7 +170,7 @@ def parse_message(text: str, *, has_plan: bool) -> ParsedMessage:
             parsed.action = "cart_add"
         else:
             parsed.action = "cart_show"
-    elif parsed.bedrooms and parsed.budget and not parsed.categories:
+    elif (parsed.bedrooms or parsed.scope) and parsed.budget and not parsed.categories:
         parsed.action = "new_request"
     elif parsed.categories and _STOCK.search(text):
         parsed.action = "out_of_stock"

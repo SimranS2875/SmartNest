@@ -24,7 +24,7 @@ Honesty rules carried over from the rest of SmartNest
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,7 +34,7 @@ from smartnest.furnishing.activity import ActivityLog, AgentBus, AgentCallError
 from smartnest.furnishing.agents import BudgetAgent, ComparisonAgent, ProductResearchAgent, SpacePlanningAgent
 from smartnest.furnishing.money import inr
 from smartnest.furnishing.catalog import ORIGIN_REAL, ORIGIN_SIMULATED, ProductCatalog
-from smartnest.furnishing.rooms import Slot
+from smartnest.furnishing.rooms import ROOM_KINDS, SCOPE_ROOMS, Slot
 
 COORD = "coordinator"
 MAX_ROUNDS = 3
@@ -47,17 +47,41 @@ class PlanError(ValueError):
 @dataclass
 class FurnishingRequest:
     total_budget: float
-    bedrooms: int
+    bedrooms: int | None = None                  # a whole home ("2BHK") ...
     style: str | None = None
     colour: str | None = None
     room_dimensions: dict[str, dict[str, float]] | None = None
+    scope: tuple[str, ...] = ()                  # ... or just these rooms ("kids_bedroom", "living_room", ...)
+    audience: str | None = None                  # child / teen / adult
+    age: int | None = None
+    themes: tuple[str, ...] = ()                 # interests that steer theme-sensitive items (wall decor)
+
+    @property
+    def label(self) -> str:
+        if self.bedrooms:
+            return f"{self.bedrooms}BHK"
+        return ", ".join(SCOPE_ROOMS[k].label.lower() for k in self.scope)
+
+    def with_changes(self, **changes: Any) -> "FurnishingRequest":
+        return replace(self, **changes)
 
     def validate(self) -> None:
         if isinstance(self.total_budget, bool) or not isinstance(self.total_budget, (int, float)) \
                 or self.total_budget != self.total_budget or self.total_budget <= 0 or self.total_budget > 1e9:
             raise PlanError("the budget must be a positive number of rupees")
-        if not isinstance(self.bedrooms, int) or isinstance(self.bedrooms, bool) or not 1 <= self.bedrooms <= 5:
+        if self.bedrooms is None:
+            if not self.scope:
+                raise PlanError("tell me which room(s) to furnish, or a home type such as 2BHK")
+        elif not isinstance(self.bedrooms, int) or isinstance(self.bedrooms, bool) or not 1 <= self.bedrooms <= 5:
             raise PlanError("bedrooms must be a whole number from 1 to 5")
+        if any(k not in ROOM_KINDS for k in self.scope):
+            raise PlanError("unknown room; choose from " + ", ".join(ROOM_KINDS))
+        if self.audience not in (None, "child", "teen", "adult"):
+            raise PlanError("audience must be child, teen or adult")
+        if self.age is not None and (isinstance(self.age, bool) or not isinstance(self.age, int) or not 0 <= self.age <= 99):
+            raise PlanError("age must be a whole number from 0 to 99")
+        if len(self.themes) > 8 or any(not isinstance(t, str) or not 2 <= len(t) <= 30 for t in self.themes):
+            raise PlanError("themes must be up to 8 short words")
 
 
 def _now() -> str:
@@ -81,6 +105,7 @@ def _product_view(option: dict[str, Any]) -> dict[str, Any]:
         "url_type": url_type, "rating": r.get("rating"), "review_count": r.get("review_count"),
         "seating_capacity": r.get("seating_capacity"), "retrieved_at": r.get("verified_at"),
         "availability": option.get("availability"),
+        "theme_matches": list(option.get("theme_matches") or []),
     }
 
 
@@ -105,7 +130,9 @@ class Plan:
     def to_dict(self) -> dict[str, Any]:
         return {
             "request": {"total_budget": self.request.total_budget, "bedrooms": self.request.bedrooms,
-                        "style": self.request.style, "colour": self.request.colour},
+                        "style": self.request.style, "colour": self.request.colour, "label": self.request.label,
+                        "scope": list(self.request.scope), "audience": self.request.audience,
+                        "age": self.request.age, "themes": list(self.request.themes)},
             "version": self.version, "updated_at": self.updated_at, "assumptions": self.assumptions,
             "rooms": self.rooms, "items": list(self.lines.values()), "summary": self.summary,
             "data_notes": self.data_notes,
@@ -142,12 +169,14 @@ class FurnishingCoordinator(CartMixin):
     def create_plan(self, request: FurnishingRequest) -> Plan:
         request.validate()
         self._request = request
-        self.log.record(COORD, "info", f"new request: {request.bedrooms}BHK, budget Rs {request.total_budget:,.0f}"
-                        + (f", style {request.style}" if request.style else ""))
+        self.log.record(COORD, "info", f"new request: {request.label}, budget ₹{request.total_budget:,.0f}"
+                        + (f", style {request.style}" if request.style else "")
+                        + (", themes " + ", ".join(request.themes) if request.themes else ""))
         self._set_beliefs(request)
         try:
             planned = self.bus.call("space_planning", "plan", {
-                "bedrooms": request.bedrooms, "room_dimensions": request.room_dimensions},
+                "bedrooms": request.bedrooms, "scope": list(request.scope), "age": request.age,
+                "room_dimensions": request.room_dimensions},
                 summary="asked Space Planning for the rooms and items")
         except AgentCallError as exc:
             raise PlanError(exc.reason) from None
@@ -183,8 +212,7 @@ class FurnishingCoordinator(CartMixin):
             self.log.record(COORD, "replan", f"event: {pid} price is now Rs {price:,.0f}", details=event)
         elif kind == "budget_change":
             new = event.get("total_budget")
-            candidate = FurnishingRequest(new, self._request.bedrooms, self._request.style, self._request.colour,
-                                          self._request.room_dimensions)
+            candidate = self._request.with_changes(total_budget=new)
             candidate.validate()
             self._request = candidate
             self.beliefs.update("user", "total_budget", float(new), source="user")
@@ -192,17 +220,27 @@ class FurnishingCoordinator(CartMixin):
         elif kind == "preference_change":
             style = event.get("style", self._request.style)
             colour = event.get("colour", self._request.colour)
-            self._request = FurnishingRequest(self._request.total_budget, self._request.bedrooms, style, colour,
-                                              self._request.room_dimensions)
+            themes = tuple(event["themes"]) if "themes" in event else self._request.themes
+            candidate = self._request.with_changes(style=style, colour=colour, themes=themes)
+            candidate.validate()
+            self._request = candidate
             self.beliefs.update("user", "style", style, source="user")
             self.beliefs.update("user", "colour", colour, source="user")
-            self.log.record(COORD, "replan", f"user changed preferences: style={style}, colour={colour}", details=event)
+            self.beliefs.update("user", "themes", list(themes), source="user")
+            self.log.record(COORD, "replan", f"user changed preferences: style={style}, colour={colour}, "
+                            f"themes={', '.join(themes) or 'none'}", details=event)
         elif kind == "remove_item":
             slot_id = event.get("slot_id")
             if slot_id not in {s.slot_id for s in self._slots}:
                 raise PlanError(f"unknown item {slot_id!r}")
             self._removed.add(slot_id)
             self.log.record(COORD, "replan", f"user removed {slot_id} from the plan", details=event)
+        elif kind == "refresh_category":
+            cat = event.get("category")
+            if cat not in {s.profile.id for s in self._slots}:
+                raise PlanError(f"{cat!r} is not part of this plan")
+            self._research.pop(cat, None)             # re-read the catalog (new data may have been saved)
+            self.log.record(COORD, "replan", f"new product data for {cat}", details=event)
         elif kind in ("choose_product", "clear_choice"):
             return self._handle_choice(event, previous)
         else:
@@ -262,6 +300,9 @@ class FurnishingCoordinator(CartMixin):
     def _set_beliefs(self, req: FurnishingRequest) -> None:
         self.beliefs.update("user", "total_budget", float(req.total_budget), source="user")
         self.beliefs.update("user", "bedrooms", req.bedrooms, source="user")
+        self.beliefs.update("user", "scope", list(req.scope), source="user")
+        self.beliefs.update("user", "audience", req.audience, source="user")
+        self.beliefs.update("user", "themes", list(req.themes), source="user")
         self.beliefs.update("user", "style", req.style, source="user")
         self.beliefs.update("user", "colour", req.colour, source="user")
 
@@ -283,14 +324,22 @@ class FurnishingCoordinator(CartMixin):
         slots = [s for s in self._slots if s.slot_id not in self._removed]
         slot_dicts = [s.to_dict() for s in slots]
         budget = float(req.total_budget)
-        ceilings = self.bus.call("budget", "allocate", {"budget": budget, "slots": slot_dicts},
-                                 summary="asked Budget to split the budget over the items")["ceilings"]
-        self.log.record("budget", "decision", f"item ceilings sum to Rs {sum(ceilings.values()):,.0f}")
         for category in sorted({s.profile.id for s in slots}):
             self._research_category(category)
+        # Items whose category has no product data yet cannot be bought, so they get no share of the budget; their
+        # money goes to items that can.  (Searching for them later re-plans with a fair share.)
+        fillable = [s for s in slots if self._research[s.profile.id]["records"]]
+        pool = fillable or slots
+        ceilings = {s.slot_id: 0.0 for s in slots}
+        ceilings.update(self.bus.call("budget", "allocate", {"budget": budget, "slots": [s.to_dict() for s in pool]},
+                                      summary="asked Budget to split the budget over the items")["ceilings"])
+        self.log.record("budget", "decision", f"item ceilings sum to ₹{sum(ceilings.values()):,.0f}")
 
         results: dict[str, dict[str, Any]] = {}
-        open_ids = {s.slot_id for s in slots}
+        open_ids = {s.slot_id for s in pool}
+        for s in slots:
+            if s not in pool:
+                results[s.slot_id] = {"selected": None, "options": [], "inspected": 0, "no_data": True}
         for round_no in range(MAX_ROUNDS):
             for slot in slots:
                 if slot.slot_id not in open_ids:
@@ -298,7 +347,7 @@ class FurnishingCoordinator(CartMixin):
                 res = self.bus.call("comparison", "compare", {
                     "slot": slot.to_dict(), "ceiling": ceilings[slot.slot_id],
                     "records": self._research[slot.profile.id]["records"], "style": req.style,
-                    "colour": req.colour, "overrides": self._overrides},
+                    "colour": req.colour, "overrides": self._overrides, "themes": list(req.themes)},
                     summary=f"asked Comparison to rank {slot.label} under Rs {ceilings[slot.slot_id]:,.0f}")
                 results[slot.slot_id] = res
                 if res["selected"] is not None:
@@ -346,7 +395,13 @@ class FurnishingCoordinator(CartMixin):
                     "ceiling": ceilings[slot.slot_id], "inspected": res.get("inspected", 0),
                     "dropped_accessories": len(research["dropped"]), "data_origin": research["origin"],
                     "rejected_examples": res.get("rejected_examples", [])}
-            if sel is None:
+            line["no_data"] = not research["records"]
+            line["search_query"] = slot.profile.search_query(req.themes)
+            if sel is None and line["no_data"]:
+                line.update(status="unfilled", product=None, utility=None, completeness=None, alternatives=[],
+                            why=(f"SmartNest has no {slot.profile.label.lower()} listings yet, so it cannot recommend one. "
+                                 f"A live search for \"{line['search_query']}\" would find some."))
+            elif sel is None:
                 line.update(status="unfilled", product=None, utility=None, completeness=None, alternatives=[],
                             why=(f"No {slot.profile.label.lower()} could be chosen within {inr(ceilings[slot.slot_id])}"
                                  f" from {res.get('inspected', 0)} listing(s); nothing was relaxed to force a match."))
@@ -366,6 +421,9 @@ class FurnishingCoordinator(CartMixin):
         summary["unverified"] = sum(1 for ln in lines.values() if ln["status"] == "unverified")
         summary["unfilled_count"] = sum(1 for ln in lines.values() if ln["status"] == "unfilled")
         summary["items"] = len(lines)
+        summary["no_data_count"] = sum(1 for ln in lines.values() if ln["no_data"])
+        summary["themes"] = list(req.themes)
+        summary["themed_items"] = sum(1 for ln in lines.values() if (ln.get("product") or {}).get("theme_matches"))
         self.log.record("budget", "decision", f"spend Rs {summary['spent']:,.0f} of Rs {budget:,.0f} "
                         f"({summary['utilisation']:.0%}); within budget: {summary['within_budget']}")
 
@@ -410,6 +468,8 @@ class FurnishingCoordinator(CartMixin):
                     f"listing(s) priced within {inr(res['ceiling'])}.")
         if sel["unavailable"]:
             sentence += f" Not stated by the listing, so not scored: {', '.join(sel['unavailable'])}."
+        if sel.get("theme_matches"):
+            sentence += f" Its title mentions {', '.join(sel['theme_matches'])}, which you asked for."
         if sel["state"] == "unverified":
             sentence += " Stock is not confirmed - check the retailer before buying."
         return sentence

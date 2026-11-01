@@ -112,6 +112,10 @@ _SHAPES: dict[str, tuple[str, tuple[int, int], tuple[int, ...]]] = {
     "wardrobe": ("{brand} {style} {doors} Door Wardrobe ({finish})", (8000, 65000), (2, 3, 4)),
     "dining_table": ("{brand} {style} {seats} Seater Dining Table Set ({finish})", (7000, 60000), (4, 4, 6, 6)),
     "refrigerator": ("{brand} {litres} L {style} Double Door Refrigerator", (13000, 70000), (190, 250, 300, 350)),
+    "kids_bed": ("{brand} {style} Kids Single Bed ({finish})", (5000, 30000), ()),
+    "study_table": ("{brand} {style} Study Table ({finish})", (2500, 20000), ()),
+    "bookshelf": ("{brand} {style} {seats} Shelf Bookshelf ({finish})", (2500, 25000), (3, 4, 5)),
+    "wall_decor": ("{brand} {seats} Wall Poster Set", (199, 2500), ("Monster", "Cartoon", "Abstract", "Floral", "Dinosaur")),
 }
 
 

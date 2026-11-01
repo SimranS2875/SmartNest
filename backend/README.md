@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2197 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 291 for the furnishing layer, chat, API, cart and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2309 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 403 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1028,6 +1028,38 @@ each line links out to the retailer (or the labelled Google Shopping page) and t
 * Interface: **Add to cart** on every plan item, alternative and shortlist row; a **Cart** tab with quantity steppers,
   totals against the budget, warnings, "Add all plan picks", "Clear cart" and "Copy buy list" (plain text with links).
 
+### Versatile requests: any room, who it is for, themes
+The assistant no longer assumes a "BHK" home. A request is a **brief** (`furnishing/brief.py`, `intent.py`):
+
+| Piece | Examples understood |
+|---|---|
+| Scope | a home type (`2BHK`) or rooms: "my son's bedroom", "living room and kitchen", "my study", "nursery" |
+| Budget | `₹2 lakh`, `80k`, `under 50000`, `within ₹45,000`, `budget of 1.5 lakh`, `60000 to spend`, or a bare number when the assistant just asked ("40000"); "1200 sq ft" or "under 3 seats" are never read as money |
+| Who | age ("10 year old"), son / daughter / kid / teen, which turns a bedroom into a **kid's bedroom** |
+| Themes | "he loves cartoons and monsters", "into dinosaurs", "space themed" (a preference, never a requirement) |
+
+It asks only for what is missing ("Which room or home...? your total budget?") and says back what it understood, so it can
+be corrected. Gemini reads free-form briefs the rules cannot (`rooms`, `budget`, `audience`, `age`, `themes`), but every
+value is validated (known rooms only, positive budget up to 1e9, age 0-99, themes as short plain words) and the rules always
+win over Gemini.
+
+New categories: kid's bed, study table, bookshelf, wall decor (rooms: kid's bedroom, bedroom, study, plus the living room
+and kitchen). Room templates live in `rooms.py` (`SCOPE_ROOMS`).
+
+**Themes** rank by the listing's own title: among the options for an item, those whose title mentions a theme word come
+first (stock is still labelled; an unverified themed listing is shown as unverified). Nothing is inferred; if no title
+mentions the theme the optimizer's order stands and the reply says "No listing I have mentions ...".
+
+**Categories with no listings yet** (the four above have no captured data) are shown as "No listings yet" and get **no
+share of the budget** (their money goes to items that can be bought); they are never filled with invented products.
+
+**Live search (opt-in, quota-limited).** A "Search live (1 request)" button on those items runs ONE Google Shopping search
+for that category (theme words are added to wall decor queries), saves the result as a snapshot and re-plans. It is off by
+default and does nothing unless `SMARTNEST_ALLOW_LIVE_SEARCH=1`, a SerpApi key is set and the lifetime allowance
+(`SERPAPI_LIFETIME_LIMIT`, counted in `.serpapi_usage.json`) is not used up; only categories in the current plan can be
+searched; the browser asks for confirmation; the planner never searches by itself. `POST /api/sessions/{id}/search`
+returns 409 (switched off / allowance used up), 502 (the search failed) or 404 (nothing usable found).
+
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
   budget). Missing ratings, sizes, styles and colours stay missing and are listed as "not stated".
@@ -1053,7 +1085,7 @@ cd ../frontend && npm install && npm run dev   # UI on http://localhost:5173 (pr
 python src/furnishing_run.py                   # terminal demo of the agents, the plan and replanning
 ```
 Settings (environment): `SMARTNEST_ALLOW_SIMULATED=auto|0|1` (auto: only when no real snapshot exists),
-`SMARTNEST_USE_GEMINI=auto|0|1`, `SMARTNEST_USE_ATLAS=0|1`, `SMARTNEST_CATALOG_DIR`, `SMARTNEST_CORS_ORIGINS`.
+`SMARTNEST_USE_GEMINI=auto|0|1`, `SMARTNEST_USE_ATLAS=0|1`, `SMARTNEST_ALLOW_LIVE_SEARCH=0|1`, `SMARTNEST_CATALOG_DIR`, `SMARTNEST_CORS_ORIGINS`.
 Sessions are stored as `{request, events}` and rebuilt by replay (planning is deterministic), so a restart loses nothing.
 
 ### Testing
@@ -1062,7 +1094,8 @@ Sessions are stored as `{request, events}` and rebuilt by replay (planning is de
   snapshot with unaltered name, price, seller and link; skipped if no snapshots).
 * `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
   chat panel, budget view, API client errors.
-* `node e2e/demo.mjs` (frontend, Playwright against the running stack): 23 checks from the demo message to the agent
+* `node e2e/kids-room.mjs` (a child's bedroom with themes, a vague first message, a bare-number answer) and
+  `node e2e/demo.mjs` (frontend, Playwright against the running stack): 12 and 23 checks from the demo message to the agent
   monitor, a page reload and the mobile layout.
 * `node e2e/record-demo.mjs` records the ~3 minute captioned demo to `docs/demo/smartnest-demo.webm`;
   the narration is in [docs/DEMO_SCRIPT.md](../docs/DEMO_SCRIPT.md).

@@ -53,6 +53,35 @@ _LIVING = Room("living_room", "Living room", ("sofa", "tv_unit"))
 _KITCHEN = Room("kitchen", "Kitchen", ("refrigerator", "dining_table"))
 
 
+#: Rooms that can be furnished on their own (no "BHK" needed).  Key = the scope word used in requests.
+SCOPE_ROOMS: dict[str, Room] = {
+    "living_room": _LIVING,
+    "kitchen": _KITCHEN,
+    "bedroom": Room("bedroom_1", "Bedroom", ("bed", "mattress", "wardrobe")),
+    "kids_bedroom": Room("kids_bedroom", "Kid's bedroom",
+                         ("kids_bed", "mattress", "wardrobe", "study_table", "bookshelf", "wall_decor")),
+    "study": Room("study", "Study", ("study_table", "bookshelf")),
+}
+ROOM_KINDS: tuple[str, ...] = tuple(SCOPE_ROOMS)
+
+
+def rooms_for_scope(scope: tuple[str, ...] | list[str], dimensions: dict[str, dict[str, float]] | None = None) -> list[Room]:
+    """The rooms for a request that names rooms instead of a home type (e.g. just a child's bedroom)."""
+    dims = dimensions or {}
+    out: list[Room] = []
+    for kind in scope:
+        if kind not in SCOPE_ROOMS:
+            raise ValueError(f"unknown room {kind!r}; known: {', '.join(ROOM_KINDS)}")
+        r = SCOPE_ROOMS[kind]
+        if r in out:
+            continue
+        d = dims.get(r.room_id) or {}
+        out.append(Room(r.room_id, r.label, r.categories, d.get("width_cm"), d.get("depth_cm")))
+    if not out:
+        raise ValueError("no rooms were given")
+    return out
+
+
 def _bedroom(n: int) -> Room:
     return Room(f"bedroom_{n}", f"Bedroom {n}", ("bed", "mattress", "wardrobe"))
 

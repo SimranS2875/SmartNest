@@ -45,5 +45,7 @@ export const api = {
     call<{ shortlist: string[] }>(`${sid(id)}/shortlist`, post({ product_id: productId })),
   compare: (id: string, productIds: string[]) =>
     call<{ products: CompareProduct[] }>(`${sid(id)}/compare`, post({ product_ids: productIds })),
+  search: (id: string, category: string) =>
+    call<{ found: number; query: string; session: SessionView }>(`${sid(id)}/search`, post({ category })),
   activity: (id: string, since = 0) => call<Activity>(`${sid(id)}/activity?since=${since}`),
 };

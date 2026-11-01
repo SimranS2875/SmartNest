@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { COMPONENT_LABEL, STATUS_LABEL, inr, percent, timeAgo } from "../format";
-import type { Alternative, PlanItem } from "../types";
+import type { Alternative, LiveStatus, PlanItem } from "../types";
 import { Badge, Button, ScoreBar } from "../ui";
 
 export interface ItemActions {
@@ -10,6 +10,7 @@ export interface ItemActions {
   onOutOfStock: (productId: string) => void;
   onRemove: (slotId: string) => void;
   onAddToCart: (productId: string) => void;
+  onSearch: (category: string) => void;
 }
 
 interface Props extends ItemActions {
@@ -17,6 +18,7 @@ interface Props extends ItemActions {
   shortlist: string[];
   cartIds: string[];
   busy: boolean;
+  live?: LiveStatus;
 }
 
 function Thumb({ src, name }: { src: string | null; name: string }) {
@@ -63,7 +65,7 @@ function AlternativeRow({ alt, slotId, busy, inCart, onChoose, onAddToCart }: { 
   );
 }
 
-export function ItemCard({ item, shortlist, cartIds, busy, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove, onAddToCart }: Props) {
+export function ItemCard({ item, shortlist, cartIds, busy, live, onShortlist, onChoose, onClearChoice, onOutOfStock, onRemove, onAddToCart, onSearch }: Props) {
   const [open, setOpen] = useState<"" | "alts" | "why">("");
   const p = item.product;
 
@@ -73,11 +75,26 @@ export function ItemCard({ item, shortlist, cartIds, busy, onShortlist, onChoose
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="font-medium">{item.category_label}</h4>
-            <p className="mt-1 text-sm text-bad">{item.why}</p>
+            <p className={`mt-1 text-sm ${item.no_data ? "text-ink" : "text-bad"}`}>{item.why}</p>
           </div>
-          <Badge tone="bad">{STATUS_LABEL.unfilled}</Badge>
+          <Badge tone={item.no_data ? "warn" : "bad"}>{item.no_data ? "No listings yet" : STATUS_LABEL.unfilled}</Badge>
         </div>
-        <div className="mt-2 text-xs text-muted">Budget ceiling for this item: {inr(item.ceiling)}</div>
+        {item.no_data ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button variant="primary" disabled={busy || !live?.enabled || live.remaining === 0}
+              onClick={() => onSearch(item.category)} aria-label={`Search live for ${item.category_label}`}>
+              Search live (1 request)
+            </Button>
+            <span className="text-xs text-muted">
+              {!live?.enabled ? "Live search is switched off (set SMARTNEST_ALLOW_LIVE_SEARCH=1)."
+                : live.remaining === 0 ? `The SerpApi allowance is used up (${live.used} of ${live.limit}).`
+                : live.remaining != null ? `${live.remaining} SerpApi request(s) left.` : "Uses one SerpApi request."}
+              {item.search_query ? ` Searches for “${item.search_query}”.` : ""}
+            </span>
+          </div>
+        ) : (
+          <div className="mt-2 text-xs text-muted">Budget ceiling for this item: {inr(item.ceiling)}</div>
+        )}
       </article>
     );
   }
@@ -94,6 +111,7 @@ export function ItemCard({ item, shortlist, cartIds, busy, onShortlist, onChoose
             {item.status === "confirmed" ? <Badge tone="ok">{STATUS_LABEL.confirmed}</Badge>
               : <Badge tone="warn" title="The listing does not state whether it is in stock. Check the retailer before buying.">{STATUS_LABEL.unverified}</Badge>}
             {item.user_choice && <Badge tone="brand">Your choice</Badge>}
+            {p.theme_matches && p.theme_matches.length > 0 && <Badge tone="brand" title="The listing's own title mentions your theme">Mentions {p.theme_matches.join(", ")}</Badge>}
             {p.simulated ? <Badge tone="bad" title="Invented for development; not a real product">Sample data</Badge>
               : <Badge tone="neutral" title={`Retrieved ${timeAgo(p.retrieved_at)} from Google Shopping`}>Real listing</Badge>}
           </div>

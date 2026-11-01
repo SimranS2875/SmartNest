@@ -21,6 +21,12 @@ class CategoryProfile:
     exclude_words: tuple[str, ...]   # title words that mark an accessory / part
     default_weight: float            # share of the whole budget before renormalisation
     needs_seating: bool = False
+    theme_sensitive: bool = False    # the listing title is expected to carry a theme (posters, bedding...)
+
+    def search_query(self, themes: tuple[str, ...] = ()) -> str:
+        """The shopping search text for this category; user themes are added only where a theme makes sense."""
+        words = list(themes[:3]) if self.theme_sensitive else []
+        return " ".join([*words, self.search_term])
 
     def accessory_reason(self, name: str, price: float) -> str | None:
         """Why a listing looks like an accessory rather than a ``label``, or ``None``."""
@@ -51,6 +57,12 @@ CATEGORIES: dict[str, CategoryProfile] = {c.id: c for c in (
                     _ACCESSORIES + ("runner", "placemat", "table cloth", "tablecloth"), 0.12, needs_seating=True),
     CategoryProfile("refrigerator", "Refrigerator", "refrigerator", 8000, 400000,
                     _ACCESSORIES + ("shelf", "tray", "gasket", "water filter", "bottle", " mat"), 0.16),
+    CategoryProfile("kids_bed", "Kid's bed", "kids single bed", 4000, 150000, _ACCESSORIES + ("mattress only",), 0.10),
+    CategoryProfile("study_table", "Study table", "study table", 2000, 100000,
+                    _ACCESSORIES + ("lamp", "organizer", "stand only", "chair only"), 0.08),
+    CategoryProfile("bookshelf", "Bookshelf", "bookshelf", 1500, 100000, _ACCESSORIES + ("bookend", "organizer"), 0.06),
+    CategoryProfile("wall_decor", "Wall decor", "wall poster", 99, 25000, ("toy", "replacement", "spare"), 0.03,
+                    theme_sensitive=True),
 )}
 
 
