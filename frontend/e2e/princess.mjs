@@ -1,4 +1,4 @@
-// A themed request whose theme has NO saved listings (node e2e/princess.mjs [baseUrl] [outDir]).
+// A themed request whose theme has NO saved listings (volcano / submarine: pick a theme nobody has searched for) (node e2e/princess.mjs [baseUrl] [outDir]).
 // The saved wall-decor search is for "monster cartoon", so it must NOT be reused for princess / barbie.
 // Live search must be ON for the search controls to be enabled. Dialogs are dismissed: no SerpApi request is spent.
 import { chromium } from "playwright";
@@ -24,18 +24,18 @@ const say = async (text) => {
 await page.goto(base);
 await page.getByRole("log").waitFor();
 const before = (await (await page.request.get(`${base}/api/health`)).json());
-await say("furnish my daughter's bedroom with princess and barbie themed architecture");
+await say("furnish my son's bedroom with a volcano and submarine theme");
 if (!(await page.locator("[data-testid^=item-]").count())) await say("the budget is 50000");
 await page.locator("[data-testid^=item-]").first().waitFor({ timeout: 90000 });
 await page.waitForTimeout(1500);
 
 const text = await page.locator("main").innerText();
 const decorCard = page.getByTestId("item-kids_bedroom.wall_decor");
-check("no wall-decor PRODUCT is shown (the saved one was for monsters)", (await decorCard.locator(".text-lg").count()) === 0 && !/Real listing|Add to cart/.test(await decorCard.innerText()));
+check("no wall-decor PRODUCT is shown (saved searches are for other themes)", (await decorCard.locator(".text-lg").count()) === 0 && !/Real listing|Add to cart/.test(await decorCard.innerText()));
 check("no anime / manga product anywhere on the page", !/anime|manga|urasawa/i.test(await page.locator("main").innerText()));
 const decor = page.getByTestId("item-kids_bedroom.wall_decor");
 check("wall decor says there is nothing saved for this theme", /No listings yet/.test(await decor.innerText()) && /does not cover/.test(await decor.innerText()));
-check("it names the themed search it would run", /princess barbie/.test(await decor.innerText()));
+check("it names the themed search it would run", /volcano|submarine/.test(await decor.innerText()));
 const rug = page.getByTestId("item-kids_bedroom.rug");
 check("the generic rug is labelled 'Not themed'", /Not themed/.test(await rug.innerText()));
 check("items that do not depend on the theme are still shown", (await page.locator("[data-testid^=item-] .text-lg").count()) >= 8);

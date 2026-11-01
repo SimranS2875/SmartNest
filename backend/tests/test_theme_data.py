@@ -159,3 +159,16 @@ class TestPlans:
                                         ORIGIN_REAL, "t", "whatever")
         plan = FurnishingCoordinator(Plain()).create_plan(FurnishingRequest(5000, None, items=("wall_decor",), themes=("x1",)))
         assert plan.lines["shopping_list.wall_decor"]["product"] is not None
+
+
+class TestRugsAreRugs:
+    @pytest.mark.parametrize("title", ["Barbie Blanket | Barbie Fleece Throw Blanket (Kids) 40 x 50", "Kids Bed Sheet Set Cartoon",
+                                       "Cartoon Curtain for Kids Room", "Soft Cushion Cover", "Bath Towel Set",
+                                       "BARBIE 70s DoLLHOUSE RUG, Little, Striped, Toy, Carpet", "Miniature Rug 1:12 scale"])
+    def test_blankets_sheets_and_curtains_are_not_rugs(self, title):
+        assert category("rug").accessory_reason(title, 1500)
+
+    @pytest.mark.parametrize("title", ["VS Home Living Cartoon Theme Kids Floor Mat", "Barbie Princess Play Mat, Pastel Round Area Rug",
+                                       "Franco Collectibles Barbie 100% Cotton Non Slip Plush Rug"])
+    def test_rugs_and_floor_mats_are_kept(self, title):
+        assert category("rug").accessory_reason(title, 2500) is None
