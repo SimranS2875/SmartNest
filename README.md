@@ -12,8 +12,8 @@
 ![Tailwind](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?logo=mongodb&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Gemini-language-8E75B2)
-![Groq](https://img.shields.io/badge/Groq-live_search-F55036)
-![Tests](https://img.shields.io/badge/tests-2688_backend_·_66_frontend-brightgreen)
+![SerpApi](https://img.shields.io/badge/SerpApi-live_search-2F6FED)
+![Tests](https://img.shields.io/badge/tests-2551_backend_·_64_frontend-brightgreen)
 
 <img src="docs/screenshots/themed-dark.png" alt="SmartNest planning a child's bedroom with princess and Barbie themed picks" width="900">
 
@@ -64,7 +64,7 @@ Most "AI shopping" demos look great until you check the prices. SmartNest is bui
 | **No invented product facts** | A missing rating, size, colour or style stays *missing* and is shown as "not stated". Nothing is defaulted or guessed. |
 | **Stock is "confirmed" only if the listing says so** | Everything else is labelled *unverified*, and still counts against your budget. |
 | **A leftover is never wasted, a shortfall is never hidden** | If something doesn't fit, SmartNest re-splits the budget; if it truly can't fit, it names the cheapest total and offers to raise the budget or drop the item. |
-| **The model's words are not evidence** | Live search runs on Groq browser search, but a listing is accepted only if its link is a page the search tool returned **and** its price is printed *on that page*. |
+| **The model's words are not evidence** | Gemini only ever supplies category *names*. Every product, price, rating and link comes from the shopping search (SerpApi) or a saved snapshot of it. |
 | **Themes match what the listing says, nothing more** | "Mentions barbie" means the *title* mentions it. A search saved for monsters is never reused for princesses. |
 | **Sample data is always labelled** | Invented demo listings are marked "Sample data", have no buy link and no image. |
 | **Secrets stay secret** | Keys live in git-ignored `.env`, are redacted from every message, and are never returned by the API. |
@@ -74,11 +74,11 @@ Most "AI shopping" demos look great until you check the prices. SmartNest is bui
 ## 🧰 What's inside
 
 - **Talk to it like a person.** Whole homes (`2BHK`), single rooms (`my son's bedroom`), or just things (`a telescope and a bed`). Budgets as `₹2 lakh`, `80k`, `under 50000`, or a bare `40000`. Age, who it's for, and interests are understood. Rules read it first; Gemini helps with free-form requests, and every value it returns is validated.
-- **Any item, not a fixed list.** 16 curated categories (sofa, bed, wardrobe, study table, rug...) plus **anything else by name**: Gemini returns only *category names*, SerpApi/Groq supply the products.
+- **Any item, not a fixed list.** 16 curated categories (sofa, bed, wardrobe, study table, rug...) plus **anything else by name**: Gemini returns only *category names*, SerpApi supplies the products.
 - **A team of five agents:** Coordinator, Space Planning, Product Research, Comparison and Budget, talking over **Ed25519-signed messages** with replay protection, role-based permissions and an audit log.
 - **Plan-level replanning (BDI).** Mark something out of stock, cut the budget, change the theme, drop an item, and only what's affected is re-planned, with an explanation of each change.
 - **A real optimizer.** Hard constraints first, then a transparent utility score whose weights redistribute honestly when data is missing.
-- **Real products.** Live search with **Groq browser search** (opt-in, per-page price verification) or **SerpApi Google Shopping**, cached as snapshots so a normal plan costs nothing.
+- **Real products.** Live search with **SerpApi Google Shopping** (opt-in), cached as snapshots so a normal plan costs nothing.
 - **A proper app.** React + Tailwind + Recharts: chat, room-wise plan, compare and shortlist, budget dashboard, cart, agent monitor, and an elegant **dark mode** (contrast-audited).
 - **Persistence.** Sessions are stored in MongoDB Atlas as `{request, events}` and rebuilt by replay, so a restart loses nothing.
 
@@ -99,7 +99,7 @@ flowchart LR
     CO -- signed --> CM[Comparison<br/>utility optimizer]
     CO -- signed --> BU[Budget]
     PR --> CAT[(Listing snapshots<br/>real, labelled)]
-    CAT -. opt-in refresh .-> GQ[Groq browser search]
+    CAT -. opt-in refresh .-> GQ[SerpApi Google Shopping]
     API --> DB[(MongoDB Atlas<br/>sessions)]
 ```
 
@@ -132,26 +132,25 @@ More to try: `decorate my 10 year old son's bedroom under 50000, he loves cartoo
 | Variable (in `backend/.env`) | What it unlocks |
 |---|---|
 | `GEMINI_API_KEY` | Better understanding of free-form requests and natural replies (optional) |
-| `GROQ_API_KEY` + `SMARTNEST_ALLOW_LIVE_SEARCH=1` | **Search live** buttons powered by Groq browser search (optional, costs tokens) |
-| `SERPAPI_API_KEY` + `SMARTNEST_SEARCH_PROVIDER=serpapi` | Use SerpApi Google Shopping for live search instead (optional) |
+| `SERPAPI_API_KEY` + `SMARTNEST_ALLOW_LIVE_SEARCH=1` | **Search live** buttons powered by SerpApi Google Shopping (optional, uses your SerpApi quota) |
+| `SERPAPI_LIFETIME_LIMIT` | Cap on live requests (a number, or `unlimited`) |
 | `MONGODB_URI` + `SMARTNEST_USE_ATLAS=1` | Keep chat sessions across restarts (optional) |
 
 `backend/.env` is git-ignored. Never commit it. All variables are documented in [`backend/.env.example`](backend/.env.example).
 
-> **Heads-up on live search:** Groq's free tier allows 200,000 tokens a day, and a verified search that opens full product pages can
-> use most of that. SmartNest steers the model to small category pages and reports the tokens used. Everything else is served from
-> saved snapshots, so normal use costs nothing.
+> **Heads-up on live search:** each live search spends SerpApi requests (the app tells you how many before it runs). Everything else
+> is served from saved snapshots, so normal use costs nothing.
 
 ---
 
 ## ✅ Tested like it matters
 
-- **2,688 backend tests** (pytest), **66 frontend tests** (vitest), plus **real-browser suites** (Playwright) that play the full
+- **2,551 backend tests** (pytest), **64 frontend tests** (vitest), plus **real-browser suites** (Playwright) that play the full
   scenarios against the real stack: the 2BHK demo (23 checks), a child's room (13), a budget too small (8), a list of things (13),
   a theme with no saved listings (13) and dark mode (16, including a WCAG contrast audit of every tab).
-- **Mutation-checked:** for the rules that matter (budget ceiling, stock honesty, price-on-the-page verification, rate-limit waits)
+- **Mutation-checked:** for the rules that matter (budget ceiling, stock honesty, theme matching, the request ledger)
   I broke the code on purpose and confirmed the tests fail.
-- **Real data in the loop:** tests run against saved real listings and a trimmed copy of a real Groq response, not only mocks.
+- **Real data in the loop:** tests run against saved real SerpApi listings, not only mocks.
 
 ```bash
 cd backend  && python -m pytest -q          # backend
@@ -169,7 +168,7 @@ backend/src/smartnest/
   optimization/    hard constraints + the utility optimizer
   bdi/             beliefs, desires, intentions (the single-item BDI agent)
   security/        Ed25519 signing, replay guard, role policy, audit log
-  integrations/    Gemini, Groq browser search, SerpApi, product parsing
+  integrations/    Gemini, SerpApi, product parsing
   api/             FastAPI app, sessions, views
   database/        MongoDB Atlas layer
   cnp/ workers/ communication/   the earlier assignments (Contract Net, threads, TCP messaging)

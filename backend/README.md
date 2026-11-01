@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2688 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 635 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2551 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 635 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
