@@ -17,7 +17,7 @@ from typing import Any
 from smartnest.furnishing import budget as budget_mod
 from smartnest.furnishing.brief import theme_matches
 from smartnest.furnishing.catalog import ProductCatalog
-from smartnest.furnishing.categories import CATEGORIES
+from smartnest.furnishing.categories import CATEGORIES, kid_signal, mature_reason
 from smartnest.furnishing.rooms import Slot, parse_home_type, rooms_for, rooms_for_scope, slots_for
 from smartnest.optimization import UtilityOptimizer
 from smartnest.optimization.utility_optimizer import CandidateEvaluation
@@ -69,9 +69,13 @@ class ProductResearchAgent:
             raise ValueError(f"unknown task {task!r}")
         profile = CATEGORIES[data["category"]]
         listings = self._catalog.listings(profile.id)
+        child = data.get("audience") in ("child", "teen")
         kept, dropped = [], []
         for record in listings.records:
-            reason = profile.accessory_reason(str(record.get("name") or ""), float(record.get("price") or 0))
+            name = str(record.get("name") or "")
+            reason = profile.accessory_reason(name, float(record.get("price") or 0))
+            if reason is None and data.get("audience") == "child":
+                reason = mature_reason(name)
             if reason:
                 dropped.append({"name": record.get("name"), "price": record.get("price"), "reason": reason})
             else:
@@ -127,8 +131,12 @@ class ComparisonAgent:
         # (a themed listing with unconfirmed stock is still labelled unverified).  Nothing is inferred; if no title
         # mentions the theme the optimizer's order stands.
         if themes and any(o["theme_matches"] for o in options):
-            options.sort(key=lambda o: (0 if o["theme_matches"] else 1, 0 if o["state"] == "confirmed" else 1,
-                                        o["rank"] or 0))
+            child = data.get("audience") in ("child", "teen")
+            # themed first; then the title that matches MORE of the themes; for a child, then the one worded for
+            # children; only after that stock state and the optimizer's rank.
+            options.sort(key=lambda o: (0 if o["theme_matches"] else 1, -len(o["theme_matches"]),
+                                        -(kid_signal(o["name"] or "") if child else 0),
+                                        0 if o["state"] == "confirmed" else 1, o["rank"] or 0))
         selected = options[0] if options else None
         rejected = [{"name": e.name, "price": e.price, "reasons": e.reasons[:2]}
                     for e in result.evaluations if e.status in ("rejected", "invalid")][:8]

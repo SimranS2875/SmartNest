@@ -33,6 +33,7 @@ from smartnest.furnishing.brief import (
     theme_matches,
 )
 from smartnest.furnishing.catalog import ORIGIN_REAL
+from smartnest.furnishing.categories import kid_signal, mature_reason
 from smartnest.furnishing.intent import parse_message, parse_money
 from smartnest.furnishing.live import LiveSearcher, LiveSearchError
 from smartnest.integrations.products.serpapi import SerpApiSettings
@@ -241,7 +242,8 @@ class TestGeminiBriefIsValidated:
 class TestRoomPlans:
     def test_kids_room_slots(self):
         assert [s.profile.id for s in slots_for(rooms_for_scope(["kids_bedroom"]))] == [
-            "kids_bed", "mattress", "wardrobe", "study_table", "bookshelf", "wall_decor"]
+            "kids_bed", "mattress", "wardrobe", "study_table", "study_chair", "bookshelf", "wall_decor", "table_lamp",
+            "rug", "bean_bag", "toy_storage"]
 
     def test_unknown_room_and_empty_scope_are_refused(self):
         with pytest.raises(ValueError):
@@ -279,7 +281,7 @@ class TestMissingData:
     def test_categories_without_listings_are_flagged_and_get_no_budget_share(self, tmp_path):
         c = FurnishingCoordinator(empty_catalog(tmp_path))
         plan = c.create_plan(FurnishingRequest(50000, None, scope=("kids_bedroom",)))
-        assert plan.summary["no_data_count"] == 6 and plan.summary["spent"] == 0
+        assert plan.summary["no_data_count"] == 11 and plan.summary["spent"] == 0
         for ln in plan.lines.values():
             assert ln["no_data"] and ln["status"] == "unfilled" and "no" in ln["why"].lower() and ln["search_query"]
 
@@ -320,8 +322,8 @@ class TestThemes:
         c = FurnishingCoordinator(sim_catalog())
         with_theme = c.create_plan(FurnishingRequest(50000, None, scope=("kids_bedroom",), themes=("submarine",)))
         without = FurnishingCoordinator(sim_catalog()).create_plan(FurnishingRequest(50000, None, scope=("kids_bedroom",)))
-        assert {k: v["product"]["product_id"] for k, v in with_theme.lines.items()} == \
-               {k: v["product"]["product_id"] for k, v in without.lines.items()}
+        pick = lambda plan: {k: (v["product"] or {}).get("product_id") for k, v in plan.lines.items()}
+        assert pick(with_theme) == pick(without)
         assert with_theme.summary["themed_items"] == 0
         assert "cannot say any pick matches" in ChatAssistant.describe_plan(with_theme)
 
@@ -456,18 +458,19 @@ class TestLiveSearchApi:
     def test_a_search_fills_the_item_and_replans(self, tmp_path):
         client, body, fake = self.started(tmp_path)
         before = body["plan"]["summary"]
-        assert before["no_data_count"] == 6
+        assert before["no_data_count"] == 11
         r = client.post(f"/api/sessions/{body['id']}/search", json={"category": "study_table"})
         assert r.status_code == 200 and r.json()["found"] > 0
         plan = r.json()["session"]["plan"]
         table = next(i for i in plan["items"] if i["category"] == "study_table")
-        assert table["product"] is not None and not table["no_data"] and plan["summary"]["no_data_count"] == 5
+        assert table["product"] is not None and not table["no_data"] and plan["summary"]["no_data_count"] == 10
         assert plan["summary"]["spent"] <= 50000 and plan["summary"]["within_budget"]
         assert fake.calls == [("study_table", ("cartoon", "monster"))]
 
     def test_searching_everything_fills_the_room_inside_the_budget(self, tmp_path):
         client, body, _ = self.started(tmp_path)
-        for cat in ("kids_bed", "mattress", "wardrobe", "study_table", "bookshelf", "wall_decor"):
+        for cat in ("kids_bed", "mattress", "wardrobe", "study_table", "study_chair", "bookshelf", "wall_decor",
+                    "table_lamp", "rug", "bean_bag", "toy_storage"):
             r = client.post(f"/api/sessions/{body['id']}/search", json={"category": cat})
             assert r.status_code == 200
         plan = client.get(f"/api/sessions/{body['id']}").json()["plan"]
@@ -539,3 +542,141 @@ class TestLiveSearchApi:
     def test_an_unknown_room_is_a_422_not_a_crash(self, tmp_path):
         client, _, _ = self.started(tmp_path)
         assert client.post("/api/sessions", json={"total_budget": 100, "scope": ["garage"]}).status_code == 422
+
+
+# ── Suitability, ranking and plan reset ──────────────────────────────────────
+
+class TestChildSuitability:
+    @pytest.mark.parametrize("title", ["Dark Thriller Poster", "Psychological Anime Wall Art", "Horror Movie Poster",
+                                       "Beer Mug Wall Decor", "18+ Adult Poster"])
+    def test_obviously_mature_titles_are_flagged(self, title):
+        assert mature_reason(title)
+
+    @pytest.mark.parametrize("title", ["Cute Cartoon Monster Poster for Kids", "Dinosaur Wall Sticker", "Space Poster"])
+    def test_ordinary_titles_are_not(self, title):
+        assert mature_reason(title) is None
+
+    def test_kid_signal_counts_child_words_in_the_title_only(self):
+        assert kid_signal("Cute Cartoon Monster Poster, Kids Room Decor") >= 3
+        assert kid_signal("Monster Anime Poster Naoki Urasawa") == 0
+
+    def listings(self, names):
+        records = SimulatedCatalog().listings("wall_decor").records[:len(names)]
+        return [dict(r, name=n, price=300.0 + i, availability="in_stock") for i, (r, n) in enumerate(zip(records, names))]
+
+    class Cat:
+        def __init__(self, records):
+            self.records = records
+
+        def listings(self, category_id):
+            return CategoryListings(category_id, self.records if category_id == "wall_decor" else [], ORIGIN_REAL, "t")
+
+    def plan_for(self, names, audience):
+        c = FurnishingCoordinator(self.Cat(self.listings(names)))
+        plan = c.create_plan(FurnishingRequest(20000, None, scope=("kids_bedroom",), audience=audience,
+                                               themes=("cartoon", "monster")))
+        return c, plan.lines["kids_bedroom.wall_decor"]
+
+    def test_mature_titles_are_dropped_for_a_child_with_the_reason_recorded(self):
+        c, line = self.plan_for(["Dark Thriller Monster Poster", "Cute Cartoon Monster Poster for Kids"], "child")
+        assert line["product"]["name"].startswith("Cute") and line["dropped_accessories"] == 1
+        assert "not for a child" in c._research["wall_decor"]["dropped"][0]["reason"]
+
+    def test_the_same_titles_are_not_dropped_for_an_adult(self):
+        c, line = self.plan_for(["Dark Thriller Monster Poster"], "adult")
+        assert line["product"] is not None and line["dropped_accessories"] == 0
+
+    def test_a_title_matching_more_themes_beats_one_matching_fewer(self):
+        _, line = self.plan_for(["Monster Anime Poster", "Cartoon Monster Poster"], None)
+        assert line["product"]["theme_matches"] == ["cartoon", "monster"]
+
+    def test_for_a_child_the_child_oriented_title_wins_among_equal_theme_matches(self):
+        _, line = self.plan_for(["Monster Poster Glossy A4", "Monster Poster for Kids Room"], "child")
+        assert "Kids" in line["product"]["name"]
+
+    def test_theme_matches_carry_a_suitability_caution(self):
+        _, line = self.plan_for(["Cartoon Monster Poster for Kids"], "child")
+        assert "matched by title only" in line["why"]
+
+
+class TestNewRequestResetsPlanState:
+    def test_a_removed_item_does_not_leak_into_the_next_plan(self):
+        c = FurnishingCoordinator(sim_catalog())
+        c.create_plan(FurnishingRequest(200000, 2))
+        c.handle_event({"type": "remove_item", "slot_id": "living_room.sofa"})
+        plan = c.create_plan(FurnishingRequest(200000, 2))
+        assert "living_room.sofa" in plan.lines
+
+    def test_a_choice_does_not_leak_into_the_next_plan(self):
+        c = FurnishingCoordinator(sim_catalog())
+        plan = c.create_plan(FurnishingRequest(200000, 2))
+        alt = plan.lines["living_room.sofa"]["alternatives"][0]["product_id"]
+        c.handle_event({"type": "choose_product", "slot_id": "living_room.sofa", "product_id": alt})
+        again = c.create_plan(FurnishingRequest(200000, 2))
+        assert not again.lines["living_room.sofa"]["user_choice"]
+
+    def test_the_audience_applies_to_the_new_plan_not_the_old_one(self):
+        class Spy:
+            def listings(self, category_id):
+                base = SimulatedCatalog().listings(category_id)
+                if category_id == "wall_decor":
+                    base.records[0] = dict(base.records[0], name="Dark Thriller Poster")
+                return base
+        c = FurnishingCoordinator(Spy())
+        c.create_plan(FurnishingRequest(50000, None, scope=("kids_bedroom",), audience=None))
+        assert c._research["wall_decor"]["dropped"] == []
+        c.create_plan(FurnishingRequest(50000, None, scope=("kids_bedroom",), audience="child"))
+        assert len(c._research["wall_decor"]["dropped"]) == 1          # re-researched under the new audience
+
+    def test_the_cart_survives_a_new_request(self):
+        c = FurnishingCoordinator(sim_catalog())
+        plan = c.create_plan(FurnishingRequest(200000, 2))
+        sofa = plan.lines["living_room.sofa"]["product"]["product_id"]
+        c.handle_event({"type": "cart_add", "product_id": sofa})
+        c.create_plan(FurnishingRequest(200000, 2))
+        assert c.cart == {sofa: 1}
+
+
+# ── The real captured data (skipped on a fresh clone) ────────────────────────
+
+KIDS = ("kids_bed", "mattress", "wardrobe", "study_table", "study_chair", "bookshelf", "wall_decor", "table_lamp",
+        "rug", "bean_bag", "toy_storage")
+HAVE_KIDS = all(SnapshotCatalog().listings(c).records for c in KIDS)
+
+
+@pytest.mark.skipif(not HAVE_KIDS, reason="no real kid's-room snapshots (run src/capture_catalog.py)")
+class TestRealKidsRoom:
+    @pytest.fixture(scope="class")
+    def plan(self):
+        c = FurnishingCoordinator(LayeredCatalog(SnapshotCatalog()))
+        return c, c.create_plan(FurnishingRequest(50000, None, scope=("kids_bedroom",), audience="child", age=10,
+                                                  themes=("cartoon", "monster")))
+
+    def test_every_item_is_filled_from_real_listings_inside_the_budget(self, plan):
+        _, p = plan
+        assert p.summary["no_data_count"] == 0 and p.summary["unfilled_count"] == 0
+        assert p.summary["spent"] <= 50000 and len(p.lines) == 11
+        index = {r["product_id"]: r for c in KIDS for r in SnapshotCatalog().listings(c).records}
+        for ln in p.lines.values():
+            real = index[ln["product"]["product_id"]]                 # KeyError would mean an invented product
+            assert ln["product"]["name"] == real["name"] and ln["product"]["price"] == real["price"]
+            assert ln["product"]["data_origin"] == "serpapi" and ln["product"]["buy_url"] == real["listing_url"]
+            assert ln["product"]["price"] <= ln["ceiling"]
+
+    def test_the_themed_picks_really_mention_the_theme_and_are_for_children(self, plan):
+        _, p = plan
+        decor = p.lines["kids_bedroom.wall_decor"]["product"]
+        assert decor["theme_matches"] and "kids" in decor["name"].lower()
+        assert not CATEGORIES["wall_decor"].accessory_reason(decor["name"], decor["price"])
+        from smartnest.furnishing.categories import mature_reason
+        assert all(mature_reason(ln["product"]["name"]) is None for ln in p.lines.values())
+
+    def test_the_search_queries_that_produced_the_data_are_recorded(self):
+        assert SnapshotCatalog().listings("wall_decor").query == "monster cartoon wall poster"
+        assert SnapshotCatalog().listings("study_table").query == "study table"
+
+    def test_no_stock_is_claimed_without_evidence(self, plan):
+        _, p = plan
+        index = {r["product_id"]: r for c in KIDS for r in SnapshotCatalog().listings(c).records}
+        for ln in p.lines.values():
+            assert (ln["status"] == "confirmed") == (index[ln["product"]["product_id"]]["availability"] == "in_stock")

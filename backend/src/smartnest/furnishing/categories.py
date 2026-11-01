@@ -43,6 +43,32 @@ class CategoryProfile:
         return None
 
 
+#: Title words that mark content that is not for a child.  A deliberately small, obvious list: it cannot judge
+#: suitability (a title says little), so for a child's room the interface also tells the user to check each pick.
+MATURE_WORDS = ("18+", "adult", "adults only", "horror", "gore", "bloody", "sexy", "nude", "erotic", "alcohol", "beer",
+                "whisky", "whiskey", "vodka", "cannabis", "weed", "murder", "serial killer", "satan", "gun ", "firearm",
+                "thriller", "psychological", "nightmare")
+
+
+#: Title words that signal a listing is meant for children (used only to rank, never to invent attributes).
+KID_WORDS = ("kids", "kid", "children", "child", "baby", "toddler", "playroom", "nursery", "cute", "cartoon", "boys", "girls")
+
+
+def kid_signal(name: str) -> int:
+    """How many child-oriented words the title itself contains."""
+    words = set(name.lower().replace(",", " ").replace("|", " ").replace("-", " ").split())
+    return sum(1 for w in KID_WORDS if w in words)
+
+
+def mature_reason(name: str) -> str | None:
+    """Why a title looks unsuitable for a child, or ``None``."""
+    lowered = f" {name.lower()} "
+    for word in MATURE_WORDS:
+        if word in lowered:
+            return f"the title mentions '{word.strip()}', which is not for a child's room"
+    return None
+
+
 _ACCESSORIES = ("cover", "protector", "topper", "pillow", "magnet", "cleaner", "stand only", "remote", "toy",
                 "miniature", "replacement", "spare", "sticker")
 
@@ -58,11 +84,18 @@ CATEGORIES: dict[str, CategoryProfile] = {c.id: c for c in (
     CategoryProfile("refrigerator", "Refrigerator", "refrigerator", 8000, 400000,
                     _ACCESSORIES + ("shelf", "tray", "gasket", "water filter", "bottle", " mat"), 0.16),
     CategoryProfile("kids_bed", "Kid's bed", "kids single bed", 4000, 150000, _ACCESSORIES + ("mattress only",), 0.10),
-    CategoryProfile("study_table", "Study table", "study table", 2000, 100000,
+    CategoryProfile("study_table", "Study table", "study table", 1200, 100000,
                     _ACCESSORIES + ("lamp", "organizer", "stand only", "chair only"), 0.08),
-    CategoryProfile("bookshelf", "Bookshelf", "bookshelf", 1500, 100000, _ACCESSORIES + ("bookend", "organizer"), 0.06),
+    CategoryProfile("bookshelf", "Bookshelf", "bookshelf", 700, 100000, _ACCESSORIES + ("bookend", "organizer"), 0.06),
     CategoryProfile("wall_decor", "Wall decor", "wall poster", 99, 25000, ("toy", "replacement", "spare"), 0.03,
                     theme_sensitive=True),
+    CategoryProfile("study_chair", "Study chair", "study chair", 1000, 60000,
+                    _ACCESSORIES + ("wheel", "caster", "armrest", "gas lift", "seat pad"), 0.05),
+    CategoryProfile("table_lamp", "Table lamp", "table lamp", 199, 15000, ("bulb", "shade only", "replacement", "spare"), 0.02),
+    CategoryProfile("rug", "Rug", "kids rug", 299, 60000, ("rug pad", "gripper", "replacement", "spare"), 0.04,
+                    theme_sensitive=True),
+    CategoryProfile("bean_bag", "Bean bag", "bean bag", 500, 20000, ("refill", "beans only", "bean refill", "spare"), 0.03),
+    CategoryProfile("toy_storage", "Toy storage", "toy storage organizer", 400, 30000, ("replacement", "spare"), 0.03),
 )}
 
 

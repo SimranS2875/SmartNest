@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2309 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 403 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2331 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 425 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1043,8 +1043,8 @@ be corrected. Gemini reads free-form briefs the rules cannot (`rooms`, `budget`,
 value is validated (known rooms only, positive budget up to 1e9, age 0-99, themes as short plain words) and the rules always
 win over Gemini.
 
-New categories: kid's bed, study table, bookshelf, wall decor (rooms: kid's bedroom, bedroom, study, plus the living room
-and kitchen). Room templates live in `rooms.py` (`SCOPE_ROOMS`).
+New categories: kid's bed, study table, study chair, bookshelf, wall decor, table lamp, rug, bean bag, toy storage (rooms:
+kid's bedroom, bedroom, study, plus the living room and kitchen). Room templates live in `rooms.py` (`SCOPE_ROOMS`).
 
 **Themes** rank by the listing's own title: among the options for an item, those whose title mentions a theme word come
 first (stock is still labelled; an unverified themed listing is shown as unverified). Nothing is inferred; if no title
@@ -1070,12 +1070,23 @@ returns 409 (switched off / allowance used up), 502 (the search failed) or 404 (
 * Gemini never selects a product, price or budget. Its rewording is discarded if it adds a number or drops a caution.
 
 ### Real data and the SerpApi quota
-`python src/capture_catalog.py --plan` shows what would be spent. The seven categories (sofa, TV unit, bed, mattress,
-wardrobe, dining table, refrigerator) were captured with the project's whole 10-request allowance (the sofa from the
-earlier cache, 6 fresh one-request searches, details only for the sofa), cached in Atlas, and saved to
-`backend/data/catalog/*.json` (git-ignored: third-party data). **The running application makes no SerpApi request**;
-the quota is exhausted (10/10) and the local ledger refuses more. Listings captured without a details lookup link to the
+`python src/capture_catalog.py --plan` shows what would be spent. **Sixteen categories** hold real listings:
+* the first seven (sofa, TV unit, bed, mattress, wardrobe, dining table, refrigerator) were captured with the first 10
+  requests (the sofa from the earlier cache, 6 fresh one-request searches, details only for the sofa);
+* nine more for a child's room (kid's bed, study table, study chair, bookshelf, wall decor, table lamp, rug, bean bag, toy
+  storage) with the second allowance of 10: 9 one-request searches (wall decor searched as "monster cartoon wall poster"
+  for the cartoon/monster request), 1 request kept spare. **19 of 20 requests are used.**
+
+Raw responses are cached in Atlas and parsed listings saved to `backend/data/catalog/*.json` (git-ignored: third-party
+data). **The running application makes no SerpApi request** unless the opt-in live search is enabled (below); the local
+ledger refuses anything beyond `SERPAPI_LIFETIME_LIMIT` (now 20). Listings captured without a details lookup link to the
 Google Shopping product page (labelled); only the three sofas with details have direct retailer links and stock evidence.
+
+**Child-safety of theme matches.** For a child's room, listings whose title has an obviously mature word (a small list in
+`categories.MATURE_WORDS`: thriller, horror, adult, 18+...) are dropped with the reason recorded, and among theme matches the
+title matching more theme words, then the one worded for children, wins. A title cannot prove a product is suitable (for
+example an adult manga poster titled "Monster"), so every theme match is shown as "matched by title only" and the user is
+asked to check it.
 
 ### Run it
 ```
@@ -1095,7 +1106,7 @@ Sessions are stored as `{request, events}` and rebuilt by replay (planning is de
 * `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
   chat panel, budget view, API client errors.
 * `node e2e/kids-room.mjs` (a child's bedroom with themes, a vague first message, a bare-number answer) and
-  `node e2e/demo.mjs` (frontend, Playwright against the running stack): 12 and 23 checks from the demo message to the agent
+  `node e2e/demo.mjs` (frontend, Playwright against the running stack): 13 and 23 checks from the demo message to the agent
   monitor, a page reload and the mobile layout.
 * `node e2e/record-demo.mjs` records the ~3 minute captioned demo to `docs/demo/smartnest-demo.webm`;
   the narration is in [docs/DEMO_SCRIPT.md](../docs/DEMO_SCRIPT.md).

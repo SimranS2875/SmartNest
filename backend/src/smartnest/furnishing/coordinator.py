@@ -169,6 +169,13 @@ class FurnishingCoordinator(CartMixin):
     def create_plan(self, request: FurnishingRequest) -> Plan:
         request.validate()
         self._request = request
+        # A new request replaces the old plan: forget its per-plan state (a removed item or a pick of the old plan must
+        # not leak into the new one).  World facts (stock, prices) and the cart and shortlist are kept.
+        self._removed.clear()
+        self._choices.clear()
+        self._refused_choice.clear()
+        self._research.clear()
+        self.plan = None
         self.log.record(COORD, "info", f"new request: {request.label}, budget ₹{request.total_budget:,.0f}"
                         + (f", style {request.style}" if request.style else "")
                         + (", themes " + ", ".join(request.themes) if request.themes else ""))
@@ -308,7 +315,8 @@ class FurnishingCoordinator(CartMixin):
 
     def _research_category(self, category: str) -> dict[str, Any]:
         if category not in self._research:
-            result = self.bus.call("product_research", "research", {"category": category},
+            result = self.bus.call("product_research", "research",
+                                   {"category": category, "audience": self._request.audience if self._request else None},
                                    summary=f"asked Product Research for {category} listings")
             self._research[category] = result
             origin = {ORIGIN_REAL: "real SerpApi snapshot", ORIGIN_SIMULATED: "SIMULATED sample"}.get(
@@ -347,7 +355,8 @@ class FurnishingCoordinator(CartMixin):
                 res = self.bus.call("comparison", "compare", {
                     "slot": slot.to_dict(), "ceiling": ceilings[slot.slot_id],
                     "records": self._research[slot.profile.id]["records"], "style": req.style,
-                    "colour": req.colour, "overrides": self._overrides, "themes": list(req.themes)},
+                    "colour": req.colour, "overrides": self._overrides, "themes": list(req.themes),
+                    "audience": req.audience},
                     summary=f"asked Comparison to rank {slot.label} under Rs {ceilings[slot.slot_id]:,.0f}")
                 results[slot.slot_id] = res
                 if res["selected"] is not None:
@@ -374,7 +383,8 @@ class FurnishingCoordinator(CartMixin):
             room = round(budget - spent, 2)
             res = self.bus.call("comparison", "compare", {
                 "slot": slot.to_dict(), "ceiling": room, "records": self._research[slot.profile.id]["records"],
-                "style": req.style, "colour": req.colour, "overrides": self._overrides},
+                "style": req.style, "colour": req.colour, "overrides": self._overrides, "themes": list(req.themes),
+                "audience": req.audience},
                 summary=f"asked Comparison to try {slot.label} with all remaining money ({inr(room)})")
             if res["selected"] is not None:
                 results[slot.slot_id] = res
@@ -469,7 +479,8 @@ class FurnishingCoordinator(CartMixin):
         if sel["unavailable"]:
             sentence += f" Not stated by the listing, so not scored: {', '.join(sel['unavailable'])}."
         if sel.get("theme_matches"):
-            sentence += f" Its title mentions {', '.join(sel['theme_matches'])}, which you asked for."
+            sentence += (f" Its title mentions {', '.join(sel['theme_matches'])}, which you asked for "
+                         "(matched by title only, so check it suits the person it is for).")
         if sel["state"] == "unverified":
             sentence += " Stock is not confirmed - check the retailer before buying."
         return sentence
