@@ -92,9 +92,9 @@ class TestAssistant:
         r = a.respond(s, "around 1.5 lakh")
         assert r.changed and s.plan.request.total_budget == 150000 and s.plan.request.bedrooms == 2
 
-    def test_budget_only_asks_for_bedrooms(self):
+    def test_budget_only_asks_which_room_or_home(self):
         s, a = session(), ChatAssistant()
-        assert a.respond(s, "my budget is 3 lakh").needs == ["bedrooms"]
+        assert a.respond(s, "my budget is 3 lakh").needs == ["rooms"]
 
     def test_budget_change(self):
         s, a = ready()
@@ -165,8 +165,8 @@ class TestAssistant:
 class FakeGemini:
     """Stands in for GeminiService."""
 
-    def __init__(self, text=None, extraction=None, fail=False):
-        self.text, self.extraction, self.fail = text, extraction, fail
+    def __init__(self, text=None, extraction=None, fail=False, brief=None):
+        self.text, self.extraction, self.fail, self.brief = text, extraction, fail, brief
 
     def extract_requirements(self, message):
         if self.fail:
@@ -176,6 +176,8 @@ class FakeGemini:
     def _structured(self, prompt, schema, system, what):
         if self.fail:
             raise RuntimeError("down")
+        if what == "home brief":
+            return schema(**(self.brief or {}))
         return schema(text=self.text)
 
 
@@ -204,9 +206,8 @@ class TestGeminiGuards:
         assert r.wording == "rules" and s.plan is not None
 
     def test_gemini_fills_in_what_the_rules_missed(self):
-        from smartnest.integrations.gemini.schemas import RequirementsExtraction
-        ext = RequirementsExtraction(total_budget=250000, preferred_style="japandi", confidence=0.9)
-        s, a = session(), ChatAssistant(FakeGemini(extraction=ext, text="x"))
-        a.respond(s, "two rooms hall and kitchen, spend around two and a half hundred thousand")
-        # the number of bedrooms is still unknown to the rules, so the assistant asks instead of guessing
-        assert s.plan is None and s.draft.get("budget") == 250000
+        brief = {"budget": 250000, "rooms": ["living_room", "kitchen"], "themes": ["japandi"]}
+        s, a = session(), ChatAssistant(FakeGemini(brief=brief))
+        r = a.respond(s, "the hall and the kitchen, spend around two and a half hundred thousand rupees")
+        assert s.plan is not None and s.plan.request.total_budget == 250000 and r.kind == "new_request"
+        assert s.plan.request.scope == ("living_room", "kitchen")

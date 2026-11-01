@@ -59,6 +59,10 @@ class CreateSession(BaseModel):
     message: str | None = Field(default=None, max_length=MAX_MESSAGE_CHARS)
     total_budget: float | None = Field(default=None, gt=0, le=1e9)
     bedrooms: int | None = Field(default=None, ge=1, le=5)
+    scope: list[str] = Field(default_factory=list, max_length=5)
+    audience: Literal["child", "teen", "adult"] | None = None
+    age: int | None = Field(default=None, ge=0, le=99)
+    themes: list[str] = Field(default_factory=list, max_length=8)
     style: str | None = Field(default=None, max_length=40)
     colour: str | None = Field(default=None, max_length=40)
 
@@ -72,7 +76,9 @@ class EventBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["out_of_stock", "price_change", "budget_change", "preference_change", "remove_item",
                   "choose_product", "clear_choice", "cart_add", "cart_set", "cart_remove", "cart_clear",
-                  "cart_add_plan"]
+                  "cart_add_plan", "refresh_category"]
+    category: str | None = Field(default=None, max_length=40)
+    themes: list[str] | None = Field(default=None, max_length=8)
     qty: int | None = Field(default=None, ge=0, le=10)
     product_id: str | None = Field(default=None, max_length=80)
     slot_id: str | None = Field(default=None, max_length=80)
@@ -80,6 +86,11 @@ class EventBody(BaseModel):
     total_budget: float | None = Field(default=None, gt=0, le=1e9)
     style: str | None = Field(default=None, max_length=40)
     colour: str | None = Field(default=None, max_length=40)
+
+
+class SearchBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    category: str = Field(min_length=2, max_length=40)
 
 
 class ShortlistBody(BaseModel):
@@ -99,6 +110,7 @@ class ApiSettings(BaseModel):
     allow_simulated: bool | Literal["auto"] = "auto"
     use_gemini: bool | Literal["auto"] = "auto"
     use_atlas: bool = False
+    live_search: bool = False              # SMARTNEST_ALLOW_LIVE_SEARCH=1: allow the (quota-limited) live search button
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     max_sessions: int = 200
     requests_per_minute: int = 120
@@ -115,6 +127,7 @@ class ApiSettings(BaseModel):
             "allow_simulated": flag("SMARTNEST_ALLOW_SIMULATED", "auto"),
             "use_gemini": flag("SMARTNEST_USE_GEMINI", "auto"),
             "use_atlas": flag("SMARTNEST_USE_ATLAS", False),
+            "live_search": flag("SMARTNEST_ALLOW_LIVE_SEARCH", False),
         }
         if env.get("SMARTNEST_CATALOG_DIR"):
             values["catalog_dir"] = Path(env["SMARTNEST_CATALOG_DIR"])
@@ -171,8 +184,20 @@ def _build_repository(settings: ApiSettings):
         return None
 
 
+def _build_searcher(settings: ApiSettings, snapshots: SnapshotCatalog):
+    if not settings.live_search:
+        return None
+    try:
+        from smartnest.furnishing.live import LiveSearcher
+        from smartnest.integrations.products.serpapi import load_serpapi_settings
+        return LiveSearcher(load_serpapi_settings(), snapshots)
+    except Exception as exc:
+        logger.warning("live search unavailable: %s", type(exc).__name__)
+        return None
+
+
 def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any = "auto",
-               repository: Any = "auto") -> FastAPI:
+               repository: Any = "auto", searcher: Any = "auto") -> FastAPI:
     settings = settings or ApiSettings.from_env()
     snapshots = SnapshotCatalog(settings.catalog_dir)
     if catalog is None:
@@ -180,6 +205,7 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
         allow_sim = (not has_real) if settings.allow_simulated == "auto" else bool(settings.allow_simulated)
         catalog = LayeredCatalog(snapshots, SimulatedCatalog(), allow_simulated=allow_sim)
     llm = _build_gemini(settings) if gemini == "auto" else gemini
+    live = _build_searcher(settings, snapshots) if searcher == "auto" else searcher
     repo = _build_repository(settings) if repository == "auto" else repository
     registry = SessionRegistry(lambda: FurnishingCoordinator(catalog), repository=repo, max_sessions=settings.max_sessions)
     assistant = ChatAssistant(llm)
@@ -228,6 +254,7 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
             pass
         return {"status": "ok", "gemini": llm is not None, "persistence": "mongodb" if repo is not None else "memory",
                 "serpapi_quota": quota, "sessions": len(registry),
+                "live_search": live.status() if live is not None else {"enabled": False},
                 "catalog": {"simulated_allowed": getattr(catalog, "allow_simulated", False)}}
 
     @app.get("/api/catalog")
@@ -246,10 +273,11 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
     def create_session(body: CreateSession) -> dict[str, Any]:
         session = registry.create()
         with session.lock:
-            if body.total_budget is not None and body.bedrooms is not None:
-                session.start(FurnishingRequest(body.total_budget, body.bedrooms,
-                                                body.style.strip().lower() if body.style else None,
-                                                body.colour.strip().lower() if body.colour else None))
+            if body.total_budget is not None and (body.bedrooms is not None or body.scope):
+                session.start(FurnishingRequest(
+                    body.total_budget, body.bedrooms, body.style.strip().lower() if body.style else None,
+                    body.colour.strip().lower() if body.colour else None, None, tuple(body.scope), body.audience,
+                    body.age, tuple(t.strip().lower() for t in body.themes)))
                 session.say("assistant", assistant.describe_plan(session.plan, intro=True), "new_request")
             elif body.message:
                 assistant.respond(session, body.message)
@@ -278,6 +306,30 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
             session.apply(event)
         registry.save(session)
         return views.session_view(session)
+
+    @app.post("/api/sessions/{session_id}/search")
+    def live_search(session_id: str, body: SearchBody) -> dict[str, Any]:
+        """Search the live shopping API for ONE category of this plan.  Spends one SerpApi request."""
+        from smartnest.furnishing.live import LiveSearchError
+        session = session_of(session_id)
+        if live is None:
+            return JSONResponse({"detail": "Live search is switched off. Set SMARTNEST_ALLOW_LIVE_SEARCH=1 "
+                                           "(and a SerpApi key) to enable it."}, status_code=409)
+        with session.lock:
+            if session.plan is None:
+                raise PlanError("there is no plan yet")
+            if body.category not in {s.profile.id for s in session.coordinator._slots}:
+                raise PlanError(f"{body.category!r} is not part of this plan")
+            try:
+                found = live.search(body.category, session.request.themes if session.request else ())
+            except LiveSearchError as exc:
+                return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=409 if exc.code == "quota" else 502)
+            if not found.records:
+                return JSONResponse({"detail": f"The search found no usable {body.category.replace('_', ' ')} listings.",
+                                     "code": "empty"}, status_code=404)
+            session.apply({"type": "refresh_category", "category": body.category})
+        registry.save(session)
+        return {"found": len(found.records), "query": found.query, "session": views.session_view(session)}
 
     @app.get("/api/sessions/{session_id}/rooms")
     def rooms(session_id: str) -> dict[str, Any]:

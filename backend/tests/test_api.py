@@ -39,7 +39,7 @@ class TestStatus:
 
     def test_catalog_reports_origin_per_category(self, client):
         cats = client.get("/api/catalog").json()["categories"]
-        assert len(cats) == 7 and all(c["origin"] == "simulated" and c["listings"] > 0 for c in cats)
+        assert len(cats) == 11 and all(c["origin"] == "simulated" and c["listings"] > 0 for c in cats)
 
 
 class TestSessions:

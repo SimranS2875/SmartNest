@@ -16,6 +16,7 @@ export interface Product {
   rating: number | null;
   review_count: number | null;
   seating_capacity: number | null;
+  theme_matches?: string[];
   retrieved_at: string | null;
   availability: string | null;
 }
@@ -48,6 +49,8 @@ export interface PlanItem {
   contributions?: Record<string, number>;
   alternatives: Alternative[];
   why: string;
+  no_data?: boolean;
+  search_query?: string;
   inspected: number;
   dropped_accessories: number;
   data_origin: string;
@@ -65,11 +68,17 @@ export interface Summary {
   confirmed: number;
   unverified: number;
   unfilled_count: number;
+  no_data_count?: number;
+  themes?: string[];
+  themed_items?: number;
   items: number;
 }
 
 export interface Plan {
-  request: { total_budget: number; bedrooms: number; style: string | null; colour: string | null };
+  request: {
+    total_budget: number; bedrooms: number | null; style: string | null; colour: string | null; label: string;
+    scope: string[]; audience: string | null; age: number | null; themes: string[];
+  };
   version: number;
   updated_at: string;
   assumptions: string[];
@@ -199,6 +208,14 @@ export interface Health {
   serpapi_quota: { used: number; limit: number | null } | null;
   sessions: number;
   catalog: { simulated_allowed: boolean };
+  live_search?: LiveStatus;
+}
+
+export interface LiveStatus {
+  enabled: boolean;
+  remaining?: number | null;
+  limit?: number | null;
+  used?: number;
 }
 
 export interface CatalogInfo {

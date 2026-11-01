@@ -15,7 +15,8 @@ from smartnest.api.app import ApiSettings, create_app
 from smartnest.furnishing import CATEGORIES, SnapshotCatalog
 
 SNAP = SnapshotCatalog()
-HAVE = all(SNAP.listings(c).records for c in CATEGORIES)
+CAPTURED = ("sofa", "tv_unit", "bed", "mattress", "wardrobe", "dining_table", "refrigerator")   # captured with SerpApi
+HAVE = all(SNAP.listings(c).records for c in CAPTURED)
 pytestmark = pytest.mark.skipif(not HAVE, reason="no real catalog snapshots (run src/capture_catalog.py)")
 
 DEMO = ("I just moved into a 2BHK apartment. My furnishing budget is ₹2 lakh. I prefer minimalist furniture. "
@@ -31,7 +32,7 @@ def started():
 
 def real_index():
     index = {}
-    for cat in CATEGORIES:
+    for cat in CAPTURED:
         for r in SNAP.listings(cat).records:
             index[r["product_id"]] = r
     return index
@@ -126,5 +127,5 @@ def test_the_api_makes_no_serpapi_requests():
 
 
 def test_snapshot_responses_contain_no_credentials():
-    blob = json.dumps({c: SNAP.listings(c).records for c in CATEGORIES})
+    blob = json.dumps({c: SNAP.listings(c).records for c in CAPTURED})
     assert "api_key" not in blob.lower() and "serpapi.com" not in blob

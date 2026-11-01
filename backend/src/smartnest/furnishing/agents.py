@@ -15,9 +15,10 @@ from dataclasses import asdict
 from typing import Any
 
 from smartnest.furnishing import budget as budget_mod
+from smartnest.furnishing.brief import theme_matches
 from smartnest.furnishing.catalog import ProductCatalog
 from smartnest.furnishing.categories import CATEGORIES
-from smartnest.furnishing.rooms import Slot, parse_home_type, rooms_for, slots_for
+from smartnest.furnishing.rooms import Slot, parse_home_type, rooms_for, rooms_for_scope, slots_for
 from smartnest.optimization import UtilityOptimizer
 from smartnest.optimization.utility_optimizer import CandidateEvaluation
 
@@ -29,16 +30,27 @@ class SpacePlanningAgent:
         if task != "plan":
             raise ValueError(f"unknown task {task!r}")
         bedrooms = data.get("bedrooms")
+        scope = list(data.get("scope") or [])
         assumptions: list[str] = []
-        if bedrooms is None:
+        if bedrooms is None and not scope:
             bedrooms = parse_home_type(str(data.get("home_text") or ""))
-        if bedrooms is None:
-            raise ValueError("the number of bedrooms is not known (say e.g. '2BHK')")
-        rooms = rooms_for(int(bedrooms), data.get("room_dimensions"))
+        if bedrooms is not None:
+            rooms = rooms_for(int(bedrooms), data.get("room_dimensions"))
+            assumptions.append(f"A {bedrooms}BHK has a living room, {bedrooms} bedroom(s) and a kitchen.")
+            assumptions.append("Living room: sofa (3 seats or more) and TV unit. Each bedroom: bed, mattress, wardrobe. "
+                               "Kitchen: refrigerator and a dining table that seats 4 or more.")
+        elif scope:
+            rooms = rooms_for_scope(scope, data.get("room_dimensions"))
+            for room in rooms:
+                assumptions.append(f"{room.label}: " + ", ".join(CATEGORIES[c].label.lower() for c in room.categories) + ".")
+            if "kids_bedroom" in scope:
+                age = data.get("age")
+                assumptions.append("This is a child's room" + (f" (age {age})" if age else "") +
+                                   ": SmartNest looks for a single/kid's bed and a study table. Sizes are only checked "
+                                   "where a listing states them.")
+        else:
+            raise ValueError("neither a home type (e.g. 2BHK) nor any room was given")
         slots = slots_for(rooms)
-        assumptions.append(f"A {bedrooms}BHK has a living room, {bedrooms} bedroom(s) and a kitchen.")
-        assumptions.append("Living room: sofa (3 seats or more) and TV unit. Each bedroom: bed, mattress, wardrobe. "
-                           "Kitchen: refrigerator and a dining table that seats 4 or more.")
         if not any(r.width_cm or r.depth_cm for r in rooms):
             assumptions.append("No room dimensions were given, so no size limits were applied; products whose size "
                                "is stated are not checked against a room.")
@@ -70,7 +82,8 @@ class ProductResearchAgent:
                 "found": len(listings.records)}
 
 
-def _option(evaluation: CandidateEvaluation, record: dict[str, Any], state: str) -> dict[str, Any]:
+def _option(evaluation: CandidateEvaluation, record: dict[str, Any], state: str,
+            themes: list[str] | None = None) -> dict[str, Any]:
     b = evaluation.breakdown
     return {
         "state": state, "rank": evaluation.rank, "product_id": evaluation.product_id, "name": evaluation.name,
@@ -80,6 +93,7 @@ def _option(evaluation: CandidateEvaluation, record: dict[str, Any], state: str)
         "contributions": b.contributions if b else {}, "excluded": b.excluded if b else {},
         "availability": evaluation.availability, "gaps": list(evaluation.gaps), "fit": evaluation.fit_label,
         "reasons": list(evaluation.reasons), "record": record,
+        "theme_matches": theme_matches(evaluation.name or "", themes or []),
     }
 
 
@@ -106,16 +120,22 @@ class ComparisonAgent:
                         "preferred_style": data.get("style"), "preferred_colour": data.get("colour")}
         result = self._optimizer.optimize(records, requirements)
         by_id = {r["product_id"]: r for r in records}
-        options = [_option(e, by_id.get(e.product_id, {}), "confirmed") for e in result.ranking[:5]]
-        options += [_option(e, by_id.get(e.product_id, {}), "unverified") for e in result.unverified[:5]]
-        selected = options[0] if result.ranking else (_option(result.unverified[0], by_id.get(
-            result.unverified[0].product_id, {}), "unverified") if result.unverified else None)
+        themes = [str(t) for t in (data.get("themes") or [])]
+        options = [_option(e, by_id.get(e.product_id, {}), "confirmed", themes) for e in result.ranking[:5]]
+        options += [_option(e, by_id.get(e.product_id, {}), "unverified", themes) for e in result.unverified[:5]]
+        # A stated theme is a preference that outranks the utility order: options whose TITLE mentions it come first
+        # (a themed listing with unconfirmed stock is still labelled unverified).  Nothing is inferred; if no title
+        # mentions the theme the optimizer's order stands.
+        if themes and any(o["theme_matches"] for o in options):
+            options.sort(key=lambda o: (0 if o["theme_matches"] else 1, 0 if o["state"] == "confirmed" else 1,
+                                        o["rank"] or 0))
+        selected = options[0] if options else None
         rejected = [{"name": e.name, "price": e.price, "reasons": e.reasons[:2]}
                     for e in result.evaluations if e.status in ("rejected", "invalid")][:8]
         return {"slot_id": slot.slot_id, "selected": selected, "options": options, "inspected": result.total_inspected,
                 "eligible": result.eligible_count, "unverified": result.unverified_count,
                 "rejected": result.rejected_count, "rejected_examples": rejected, "explanation": result.explanation,
-                "ceiling": ceiling}
+                "ceiling": ceiling, "themed": bool(themes and any(o["theme_matches"] for o in options))}
 
 
 class BudgetAgent:

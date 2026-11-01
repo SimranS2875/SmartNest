@@ -22,7 +22,7 @@ const item = (over: Partial<PlanItem> = {}): PlanItem => ({
 });
 
 const noop = {
-  onShortlist: vi.fn(), onChoose: vi.fn(), onClearChoice: vi.fn(), onOutOfStock: vi.fn(), onRemove: vi.fn(), onAddToCart: vi.fn(),
+  onShortlist: vi.fn(), onChoose: vi.fn(), onClearChoice: vi.fn(), onOutOfStock: vi.fn(), onRemove: vi.fn(), onAddToCart: vi.fn(), onSearch: vi.fn(),
 };
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
@@ -322,5 +322,46 @@ describe("CartView", () => {
     expect(text).toContain("2 x Oak Sofa - ₹37,256 - https://www.wakefit.co/sofa");
     expect(text).toContain("(sample, no link)");
     expect(text).toContain("Total: ₹37,256 of ₹2,00,000 budget");
+  });
+});
+
+
+describe("items without listings and themes", () => {
+  const noData = () => item({ product: null, status: "unfilled", no_data: true, category: "study_table", category_label: "Study table",
+    search_query: "study table", why: "SmartNest has no study table listings yet." });
+
+  it("offers a live search that names its cost and query", async () => {
+    const user = userEvent.setup();
+    render(<ItemCard item={noData()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: true, remaining: 4, limit: 10, used: 6 }} {...noop} />);
+    expect(screen.getByText("No listings yet")).toBeInTheDocument();
+    expect(screen.getByText(/4 SerpApi request\(s\) left/)).toBeInTheDocument();
+    expect(screen.getByText(/study table/, { selector: "span" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Search live for Study table" }));
+    expect(noop.onSearch).toHaveBeenCalledWith("study_table");
+  });
+
+  it("disables the search when the allowance is used up and says why", () => {
+    render(<ItemCard item={noData()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: true, remaining: 0, limit: 10, used: 10 }} {...noop} />);
+    expect(screen.getByRole("button", { name: /Search live/ })).toBeDisabled();
+    expect(screen.getByText(/allowance is used up \(10 of 10\)/)).toBeInTheDocument();
+  });
+
+  it("disables the search when live search is switched off", () => {
+    render(<ItemCard item={noData()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: false }} {...noop} />);
+    expect(screen.getByRole("button", { name: /Search live/ })).toBeDisabled();
+    expect(screen.getByText(/switched off/)).toBeInTheDocument();
+  });
+
+  it("shows which theme words a listing's title mentions, and nothing when none", () => {
+    const { rerender } = render(<ItemCard item={item({ product: product({ theme_matches: ["monster"] }) })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
+    expect(screen.getByText("Mentions monster")).toBeInTheDocument();
+    rerender(<ItemCard item={item({ product: product({ theme_matches: [] }) })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
+    expect(screen.queryByText(/Mentions/)).not.toBeInTheDocument();
+  });
+
+  it("a genuinely unfilled item (not missing data) has no search button", () => {
+    render(<ItemCard item={item({ product: null, status: "unfilled", why: "No sofa fits." })} shortlist={[]} cartIds={[]} busy={false} {...noop} />);
+    expect(screen.queryByRole("button", { name: /Search live/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Not filled")).toBeInTheDocument();
   });
 });

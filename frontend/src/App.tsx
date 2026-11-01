@@ -72,6 +72,17 @@ export default function App() {
     await api.shortlist(sid, productId);
     setSession(await api.getSession(sid));
   });
+  const searchLive = (category: string) => {
+    if (!sid) return;
+    const left = health?.live_search?.remaining;
+    const ok = window.confirm(`Search the live shopping API for this category? This uses 1 SerpApi request${left != null ? ` (${left} left)` : ""}.`);
+    if (!ok) return;
+    void guarded(async () => {
+      const r = await api.search(sid, category);
+      setSession(r.session);
+      setHealth(await api.health());
+    });
+  };
   const addToCart = (product_id: string) => event({ type: "cart_add", product_id });
   const newSession = () => guarded(async () => {
     const fresh = await api.createSession();
@@ -79,6 +90,17 @@ export default function App() {
   });
 
   const plan = session?.plan ?? null;
+  // Follow-up chips that fit THIS plan (a child's room has no sofa), always including budget and cart prompts.
+  const firstPick = plan?.items.find((i) => i.product);
+  const firstRoom = session?.rooms[0]?.label;
+  const chips = plan ? [
+    ...(firstPick ? [`Why this ${firstPick.category_label.toLowerCase()}?`] : []),
+    "How much is left?",
+    ...(firstRoom ? [`Show ${firstRoom.toLowerCase()}`] : []),
+    ...(firstPick ? [`I don't need a ${firstPick.category_label.toLowerCase()}`] : []),
+    `Increase the budget to ${Math.round((plan.request.total_budget * 1.5) / 1000) * 1000}`,
+    "Add everything to my cart",
+  ] : [];
   const cartIds = (session?.cart?.lines ?? []).map((l) => l.product.product_id);
   const origins = catalog?.categories ?? [];
   const real = origins.filter((c) => c.origin === "serpapi");
@@ -96,7 +118,7 @@ export default function App() {
           </div>
           <div className="flex flex-wrap items-center gap-1.5" aria-label="System status">
             {real.length > 0
-              ? <Badge tone="ok" title={`${real.length} of ${origins.length} categories use real Google Shopping listings`}>Real data · {real.length}/{origins.length} categories · {timeAgo(oldest)}</Badge>
+              ? <Badge tone="ok" title={`${real.length} of ${origins.length} categories use real Google Shopping listings`}>Real data · {real.length} categories · {timeAgo(oldest)}</Badge>
               : origins.length > 0 && <Badge tone="bad" title="No real snapshots found; listings are invented samples">Sample data only</Badge>}
             {health && <Badge tone={health.gemini ? "brand" : "neutral"}>{health.gemini ? "Gemini on" : "Gemini off"}</Badge>}
             {health && <Badge>{health.persistence === "mongodb" ? "MongoDB" : "In-memory"}</Badge>}
@@ -119,7 +141,7 @@ export default function App() {
         <aside className="flex h-[32rem] min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-sm lg:sticky lg:top-4 lg:h-[calc(100vh-7.5rem)]"
           aria-label="Assistant">
           {session
-            ? <ChatPanel history={session.history} hasPlan={session.has_plan} busy={busy} onSend={send} />
+            ? <ChatPanel history={session.history} hasPlan={session.has_plan} busy={busy} onSend={send} suggestions={chips} />
             : <div className="p-4 text-sm text-muted">Connecting…</div>}
         </aside>
 
@@ -138,7 +160,7 @@ export default function App() {
           <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
             {tab === "plan" && (
               <PlanView rooms={session?.rooms ?? []} shortlist={session?.shortlist ?? []} busy={busy}
-                cartIds={cartIds} onAddToCart={addToCart}
+                cartIds={cartIds} onAddToCart={addToCart} live={health?.live_search} onSearch={searchLive}
                 notes={plan?.data_notes ?? []} assumptions={plan?.assumptions ?? []}
                 onShortlist={toggleShortlist}
                 onChoose={(slot_id, product_id) => event({ type: "choose_product", slot_id, product_id })}

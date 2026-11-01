@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from smartnest.furnishing.categories import CATEGORIES
+from smartnest.furnishing.rooms import ROOM_KINDS, SCOPE_ROOMS
 from smartnest.furnishing.coordinator import FurnishingCoordinator, FurnishingRequest, Plan, PlanError
 from smartnest.furnishing.intent import ParsedMessage, parse_message
 from smartnest.furnishing.money import inr
@@ -26,9 +27,10 @@ from smartnest.furnishing.money import inr
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_CHARS = 1000
-HELP_TEXT = ("Tell me about your home and I'll plan it. For example: \"I just moved into a 2BHK apartment. "
-             "My furnishing budget is ₹2 lakh. I prefer minimalist furniture. Help me furnish the entire apartment.\"")
-
+BARE_AMOUNT = re.compile(r"\s*(?:₹|rs\.?|inr)?\s*(\d[\d,]*)\s*(?:rupees|rs)?\s*", re.IGNORECASE)
+HELP_TEXT = ("Tell me what to furnish and your budget, in your own words. For example: "
+             "\"I just moved into a 2BHK apartment, budget Rs 2 lakh, minimalist\" or "
+             "\"decorate my 10 year old son's bedroom under 50000, he loves dinosaurs\".")
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -104,8 +106,36 @@ class ChatAssistant:
     # ── Understanding ────────────────────────────────────────────────────
 
     def _fill_from_gemini(self, parsed: ParsedMessage, session: HomeSession) -> ParsedMessage:
-        """If the rules understood nothing, ask Gemini for a budget / style / colour (validated like any other value)."""
-        if self._gemini is None or parsed.action not in ("unknown", "help"):
+        """Let Gemini read what the rules could not (validated like every other value).
+
+        Before a plan exists it reads a whole *brief* (rooms, budget, who it is for, themes).  After a plan exists it is
+        only asked about messages the rules did not understand at all.
+        """
+        if self._gemini is None:
+            return parsed
+        if session.plan is None:
+            have_home = parsed.bedrooms or parsed.scope or session.draft.get("bedrooms") or session.draft.get("scope")
+            have_budget = parsed.budget is not None or session.draft.get("budget") is not None
+            if (have_home and have_budget) or len(parsed.text) < 20:
+                return parsed
+            brief = self._read_brief(parsed.text)
+            if brief is None:
+                return parsed
+            if not parsed.bedrooms and not parsed.scope and brief.get("bedrooms"):
+                parsed.bedrooms = brief["bedrooms"]
+            if not parsed.bedrooms and not parsed.scope and brief.get("rooms"):
+                parsed.scope = brief["rooms"]
+            parsed.budget = parsed.budget if parsed.budget is not None else brief.get("budget")
+            parsed.audience = parsed.audience or brief.get("audience")
+            parsed.age = parsed.age if parsed.age is not None else brief.get("age")
+            parsed.style = parsed.style or brief.get("style")
+            parsed.colour = parsed.colour or brief.get("colour")
+            parsed.themes = list(dict.fromkeys([*parsed.themes, *brief.get("themes", [])]))[:6]
+            if parsed.bedrooms or parsed.scope or parsed.budget is not None or parsed.themes:
+                parsed.action = "new_request"
+                parsed.notes.append("understood with Gemini")
+            return parsed
+        if parsed.action not in ("unknown", "help"):
             return parsed
         try:
             ext = self._gemini.extract_requirements(parsed.text)
@@ -118,14 +148,57 @@ class ChatAssistant:
             parsed.budget = parsed.budget or budget
             parsed.style = parsed.style or (style.lower() if style else None)
             parsed.colour = parsed.colour or (colour.lower() if colour else None)
-            if session.plan is None:
-                parsed.action = "new_request" if (parsed.bedrooms or session.draft.get("bedrooms")) else "help"
-            elif budget:
+            if budget:
                 parsed.action = "set_budget"
             elif style or colour:
                 parsed.action = "set_preference"
             parsed.notes.append("understood with Gemini")
         return parsed
+
+    def _read_brief(self, text: str) -> dict[str, Any] | None:
+        """Gemini's reading of a free-form brief, cleaned and validated; ``None`` if unavailable or unusable."""
+        from pydantic import BaseModel, ConfigDict
+        from smartnest.integrations.gemini import prompts
+
+        class HomeBrief(BaseModel):
+            model_config = ConfigDict(extra="ignore")
+            rooms: list[str] = []
+            bedrooms: int | None = None
+            budget: float | None = None
+            audience: str | None = None
+            age: int | None = None
+            themes: list[str] = []
+            style: str | None = None
+            colour: str | None = None
+
+        prompt = ("Read the home furnishing request below and return JSON with these keys (null / empty when not stated, "
+                  "never guess): rooms (a list from: " + ", ".join(ROOM_KINDS) + "; use kids_bedroom for a child's or "
+                  "teenager's bedroom), bedrooms (whole-home size such as 2 for a 2BHK, else null), budget (total "
+                  "rupees as a number), audience (child, teen or adult), age (number), themes (interest words the person "
+                  "likes, lower case single words), style, colour.\n\nREQUEST:\n" + text)
+        try:
+            raw = self._gemini._structured(prompt, HomeBrief, prompts.SYSTEM_EXTRACTION, what="home brief")
+        except Exception as exc:
+            logger.info("Gemini brief unavailable: %s", type(exc).__name__)
+            return None
+        clean: dict[str, Any] = {}
+        rooms = [r for r in raw.rooms if r in ROOM_KINDS]
+        if rooms:
+            clean["rooms"] = list(dict.fromkeys(rooms))
+        if isinstance(raw.bedrooms, int) and not isinstance(raw.bedrooms, bool) and 1 <= raw.bedrooms <= 5:
+            clean["bedrooms"] = raw.bedrooms
+        if isinstance(raw.budget, (int, float)) and not isinstance(raw.budget, bool) and 0 < raw.budget <= 1e9:
+            clean["budget"] = float(raw.budget)
+        if raw.audience in ("child", "teen", "adult"):
+            clean["audience"] = raw.audience
+        if isinstance(raw.age, int) and not isinstance(raw.age, bool) and 0 <= raw.age <= 99:
+            clean["age"] = raw.age
+        themes = [t.strip().lower() for t in raw.themes if isinstance(t, str)]
+        clean["themes"] = [t for t in dict.fromkeys(themes) if re.fullmatch(r"[a-z][a-z \-]{1,28}", t)][:6]
+        for key, value in (("style", raw.style), ("colour", raw.colour)):
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z \-]{1,29}", value.strip()):
+                clean[key] = value.strip().lower()
+        return clean
 
     # ── Actions ──────────────────────────────────────────────────────────
 
@@ -134,28 +207,70 @@ class ChatAssistant:
         return handler(session, p) if handler else Reply(HELP_TEXT, "help")
 
     def _do_help(self, session: HomeSession, p: ParsedMessage) -> Reply:
-        if session.plan is None and (session.draft or p.bedrooms or p.budget):
+        if session.plan is None and (session.draft or p.bedrooms or p.scope or p.budget or p.themes):
             return self._do_new_request(session, p)
         return Reply(HELP_TEXT if session.plan is None else
                      "You can ask me to change the budget, switch style, remove an item, mark something out of stock, "
-                     "explain a choice, compare options, or show a room.", "help")
+                     "explain a choice, compare options, add to your cart, or show a room.", "help")
 
     def _do_unknown(self, session: HomeSession, p: ParsedMessage) -> Reply:
         return self._do_help(session, p)
 
+    @staticmethod
+    def _understood(d: dict[str, Any]) -> str:
+        """What the assistant has understood so far, in words (so the user can correct it)."""
+        parts = []
+        if d.get("bedrooms"):
+            parts.append(f"a {d['bedrooms']}BHK home")
+        elif d.get("scope"):
+            who = ""
+            if d.get("age"):
+                who = f" for a {d['age']}-year-old"
+            elif d.get("audience"):
+                who = f" for a {d['audience']}"
+            parts.append(" and ".join(SCOPE_ROOMS[k].label.lower() for k in d["scope"]) + who)
+        if d.get("budget") is not None:
+            parts.append(f"a budget of {inr(d['budget'])}")
+        if d.get("themes"):
+            parts.append("themes: " + ", ".join(d["themes"]))
+        if d.get("style"):
+            parts.append(d["style"] + " style")
+        return ", ".join(parts)
+
     def _do_new_request(self, session: HomeSession, p: ParsedMessage) -> Reply:
         d = session.draft
-        for key, value in (("bedrooms", p.bedrooms), ("budget", p.budget), ("style", p.style), ("colour", p.colour)):
+        for key, value in (("bedrooms", p.bedrooms), ("budget", p.budget), ("style", p.style), ("colour", p.colour),
+                           ("age", p.age), ("audience", p.audience)):
             if value is not None:
                 d[key] = value
-        missing = [name for name, label in (("bedrooms", "how many bedrooms (e.g. 2BHK)"),
-                                            ("budget", "your total budget (e.g. ₹2 lakh)")) if d.get(name) is None]
+        if p.scope:
+            d["scope"] = list(dict.fromkeys(p.scope))
+        if p.themes:
+            d["themes"] = list(dict.fromkeys([*d.get("themes", []), *p.themes]))[:6]
+        # a bare number while the assistant is waiting for the budget is the budget ("50000")
+        bare = BARE_AMOUNT.fullmatch(p.text or "")
+        if bare and d.get("budget") is None and (d.get("bedrooms") or d.get("scope")):
+            amount = float(bare.group(1).replace(",", ""))
+            if amount >= 1000:
+                d["budget"] = amount
+        missing = []
+        if not d.get("bedrooms") and not d.get("scope"):
+            missing.append("rooms")
+        if d.get("budget") is None:
+            missing.append("budget")
         if missing:
-            ask = " and ".join(label for name, label in (("bedrooms", "how many bedrooms (e.g. 2BHK)"),
-                                                          ("budget", "your total budget (e.g. ₹2 lakh)"))
-                               if name in missing)
-            return Reply(f"Got it. I still need {ask}.", "new_request", needs=missing)
-        plan = session.start(FurnishingRequest(d["budget"], d["bedrooms"], d.get("style"), d.get("colour")))
+            asks = []
+            if "rooms" in missing:
+                asks.append("which room or home I should furnish (for example \"my son's bedroom\" or \"2BHK\")")
+            if "budget" in missing:
+                asks.append("your total budget (for example ₹50,000)")
+            seen = self._understood(d)
+            return Reply((f"Got it: {seen}. " if seen else "Got it. ") + "I still need " + " and ".join(asks) + ".",
+                         "new_request", needs=missing)
+        plan = session.start(FurnishingRequest(
+            d["budget"], d.get("bedrooms"), d.get("style"), d.get("colour"), None,
+            () if d.get("bedrooms") else tuple(d.get("scope") or ()), d.get("audience"), d.get("age"),
+            tuple(d.get("themes") or ())))
         session.draft = {}
         return Reply(self.describe_plan(plan, intro=True), "new_request", changed=True)
 
@@ -189,10 +304,13 @@ class ChatAssistant:
 
     def _slots_matching(self, session: HomeSession, p: ParsedMessage) -> list[str]:
         out = []
+        wanted = set(p.categories)
+        if "bed" in wanted:                       # in a child's room "the bed" is the kid's bed
+            wanted.add("kids_bed")
         for slot in session.coordinator._slots:
             if slot.slot_id in session.coordinator._removed:
                 continue
-            if p.categories and slot.profile.id not in p.categories:
+            if wanted and slot.profile.id not in wanted:
                 continue
             if p.room and slot.room_id != p.room:
                 continue
@@ -364,15 +482,27 @@ class ChatAssistant:
     @staticmethod
     def describe_plan(plan: Plan, *, intro: bool = False) -> str:
         s, r = plan.summary, plan.request
-        head = (f"I planned your {r.bedrooms}BHK: {s['items']} items across {len(plan.rooms)} rooms, "
+        subject = f"your {r.label}" if r.bedrooms else f"the {r.label}"
+        who = (f" for a {r.age}-year-old" if r.age else f" for a {r.audience}" if r.audience else "") if not r.bedrooms else ""
+        head = (f"I planned {subject}{who}: {s['items']} items, "
                 f"{inr(s['spent'])} of your {inr(s['total_budget'])} budget ({s['utilisation']:.0%}), "
                 f"{inr(s['remaining'])} left.")
         notes = []
+        if s.get("no_data_count"):
+            names = [ln["category_label"].lower() for ln in plan.lines.values() if ln.get("no_data")]
+            notes.append(f"I have no product listings yet for: {', '.join(names)}. Their share of the budget is not reserved; "
+                         "use \"Search live\" on those items to find some.")
+        if r.themes:
+            if s.get("themed_items"):
+                notes.append(f"{s['themed_items']} pick(s) have titles that mention {', '.join(r.themes)}.")
+            else:
+                notes.append(f"No listing I have mentions {', '.join(r.themes)}, so I cannot say any pick matches that theme.")
         if s["unverified"]:
             notes.append(f"Stock is not confirmed for {s['unverified']} item(s), so I marked them unverified - "
                          "check the retailer before buying.")
-        if s["unfilled_count"]:
-            notes.append(f"{s['unfilled_count']} item(s) could not be filled within the budget; I did not relax any limit.")
+        unfilled = s["unfilled_count"] - s.get("no_data_count", 0)
+        if unfilled > 0:
+            notes.append(f"{unfilled} item(s) could not be filled within the budget; I did not relax any limit.")
         origins = {ln["data_origin"] for ln in plan.lines.values()}
         if "simulated" in origins:
             notes.append("Some listings are SIMULATED samples, not real products.")
