@@ -58,21 +58,13 @@ SEARCH_SYSTEM = (
     "opened say: never guess a price, a link or a rating. Copy every URL exactly as it appears.")
 
 
-MAX_PAGE_OPENS = 3
-
-
 def search_prompt(text: str, limit: int) -> str:
-    # Cost matters: every page the model opens is fed back into it as tokens (one full product page can be 30,000+
-    # characters), and Groq's free tier allows 200,000 tokens a day.  A retailer CATEGORY page is small and lists many
-    # products with prices, so the model is steered to those and limited in how many pages it may open.
     return (f"Find up to {limit} different products for sale in India for: \"{text}\".\n"
-            f"Work cheaply: open at most {MAX_PAGE_OPENS} pages in total, and stop as soon as you have enough products.\n"
-            "Prefer a retailer's CATEGORY or COLLECTION page for this kind of product (for example on urbanladder.com, "
-            "pepperfry.com, wakefit.co, ikea.com/in, godrejinterio.com): one such page shows many products with their prices. "
-            "Use a single product page only if no category page works.\n"
-            "Only list a product from a page you actually opened. For each product give: the exact product name; the price in "
-            "rupees exactly as printed on that page; the shop; the full https URL of the page where you saw it; and the "
-            "rating out of 5 and number of reviews ONLY if that page shows them.")
+            "Search Indian shopping sites (for example Amazon.in, Flipkart, IKEA India, Pepperfry, Urban Ladder, Wakefit, "
+            "or the brand's own store) and open the product pages.\n"
+            "For each product give: the exact product name; the price in rupees exactly as printed on the page; the shop; "
+            "the full https URL of the product page; and the rating out of 5 and number of reviews ONLY if the page shows "
+            "them. Skip any product whose page you could not open.")
 
 
 EXTRACT_SYSTEM = (
@@ -139,8 +131,6 @@ def _number(value: Any) -> float | None:
 
 def _in_text(value: float, text: str) -> bool:
     forms = {f"{value:g}", f"{value:.1f}"}
-    if float(value).is_integer():
-        forms.add(f"{int(value):,}")                      # "1,051"
     return any(re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", text) for f in forms)
 
 
@@ -153,7 +143,18 @@ def build_record(item: dict[str, Any], *, allowed: AllowedUrls, evidence: Eviden
         reasons.append("name is missing")
         name = None
 
-    # The link first: it must be a page the search tool returned.
+    price = _number(item.get("price"))
+    currency = str(item.get("currency") or "INR").strip().upper()
+    if currency in ("RS", "RS.", "RUPEES", "₹"):
+        currency = "INR"
+    if price is None or price <= 0:
+        reasons.append("price is missing or not positive")
+        price = None
+    elif currency != "INR":
+        reasons.append(f"price is in {currency}, not INR")
+    elif not price_in_text(price, evidence.text):
+        reasons.append(f"price {price:,.0f} is not printed in the pages the search returned")
+
     url = None
     raw = item.get("url") if isinstance(item.get("url"), str) else None
     if not raw:
@@ -163,30 +164,6 @@ def build_record(item: dict[str, Any], *, allowed: AllowedUrls, evidence: Eviden
         if url is None:
             reasons.append("URL is not among the pages the search returned")
 
-    # The price, rating and reviews must be printed on THAT page.  A real response says which page each text belongs to;
-    # a page that was only listed (never opened) cannot vouch for anything.  If the tool output carries no per-page
-    # attribution at all, the whole tool output is the best available evidence.
-    if url is not None and evidence.attributed:
-        proof = evidence.page_text(url)
-        proof_note = "the search never opened this page, so its price was not checked"
-    else:
-        proof = evidence.text
-        proof_note = None
-
-    price = _number(item.get("price"))
-    currency = str(item.get("currency") or "INR").strip().upper()
-    if currency in ("RS", "RS.", "RUPEES", "\u20b9"):
-        currency = "INR"
-    if price is None or price <= 0:
-        reasons.append("price is missing or not positive")
-        price = None
-    elif currency != "INR":
-        reasons.append(f"price is in {currency}, not INR")
-    elif url is not None and proof is None:
-        reasons.append(proof_note or "no page text to check the price against")
-    elif proof is not None and not price_in_text(price, proof):
-        reasons.append(f"price {price:,.0f} is not printed on the page the link points to")
-
     if reasons:
         return None, reasons, name
     kind, clean_url = classify_url(url)
@@ -194,10 +171,10 @@ def build_record(item: dict[str, Any], *, allowed: AllowedUrls, evidence: Eviden
         return None, ["URL is not a usable product page"], name
 
     rating = _number(item.get("rating"))
-    rating = rating if rating is not None and 0 <= rating <= 5 and _in_text(rating, proof or "") else None
+    rating = rating if rating is not None and 0 <= rating <= 5 and _in_text(rating, evidence.text) else None
     reviews = _number(item.get("review_count"))
     reviews = int(reviews) if reviews is not None and reviews >= 0 and reviews.is_integer() \
-        and _in_text(reviews, proof or "") else None
+        and _in_text(reviews, evidence.text) else None
     seats = _SEATS.search(name)
     domain = domain_of(clean_url)
     if kind == URL_RETAILER and is_listing_page(clean_url):
@@ -245,9 +222,6 @@ class GroqProvider:
             raise ProductDiscoveryError(self.provider_id, str(exc)) from None
         result.api_calls += 1
         message = searched["choices"][0]["message"]
-        tokens = (searched.get("usage") or {}).get("total_tokens") if isinstance(searched.get("usage"), dict) else None
-        if isinstance(tokens, int):
-            result.notes.append(f"the search used {tokens:,} Groq tokens (free tier: 200,000 a day)")
         answer = message.get("content") if isinstance(message.get("content"), str) else ""
         evidence = collect(message)
         allowed = AllowedUrls()
