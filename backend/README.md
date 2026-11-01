@@ -1129,7 +1129,10 @@ else comes from the shopping search (SerpApi) or, where there is no data yet, an
 
 Raw responses are cached in Atlas and parsed listings saved to `backend/data/catalog/*.json` (git-ignored: third-party
 data). **The running application makes no SerpApi request** unless the opt-in live search is enabled (below); the local
-ledger refuses anything beyond `SERPAPI_LIFETIME_LIMIT` (now 20). Listings captured without a details lookup link to the
+ledger refuses anything beyond `SERPAPI_LIFETIME_LIMIT` when one is set. The cap is currently **removed on purpose**
+(`SERPAPI_LIFETIME_LIMIT=unlimited`; an absent value is different: the capture script refuses to run, because the `.env` may not
+have loaded). Requests are still counted, each capture run is still limited by `--spend`, and SerpApi's own plan limit (the free
+plan: 250 searches a month, 50 an hour) still applies; a 429 from SerpApi is reported as a quota error. Listings captured without a details lookup link to the
 Google Shopping product page (labelled); only the three sofas with details have direct retailer links and stock evidence.
 
 **Child-safety of theme matches.** For a child's room, listings whose title has an obviously mature word (a small list in

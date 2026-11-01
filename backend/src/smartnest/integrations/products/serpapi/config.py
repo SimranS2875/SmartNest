@@ -5,7 +5,9 @@
     SERPAPI_MAX_RESULTS         optional, default 10  (shopping results considered per search)
     SERPAPI_MAX_DETAIL_CALLS    optional, default 3   (product-details lookups per discovery run)
     SERPAPI_CACHE_TTL_HOURS     optional, default 6   (how long a cached search stays fresh)
-    SERPAPI_LIFETIME_LIMIT      optional hard cap on TOTAL requests ever made with this checkout
+    SERPAPI_LIFETIME_LIMIT      optional hard cap on TOTAL requests ever made with this checkout; the word
+                                ``unlimited`` removes the cap ON PURPOSE (an absent value is not the same: scripts
+                                that spend requests refuse to run, because it may mean the .env was not loaded)
                                 (counted in backend/.serpapi_usage.json; unset = no local cap)
 
 Real environment variables win over ``.env``.  The key is stored with
@@ -45,6 +47,7 @@ class SerpApiSettings:
     max_detail_calls: int = 3
     cache_ttl_hours: float = 6.0
     lifetime_limit: int | None = None
+    uncapped: bool = False              # the cap was removed deliberately (SERPAPI_LIFETIME_LIMIT=unlimited)
     usage_file: Path = Path(__file__).resolve().parents[5] / ".serpapi_usage.json"
     country: str = "in"
     language: str = "en"
@@ -95,13 +98,16 @@ def load_serpapi_settings(env_file: str | Path | None = None,
         except ValueError:
             raise SerpApiConfigError(f"{name} must be a number") from None
 
+    uncapped = str(get("SERPAPI_LIFETIME_LIMIT") or "").strip().lower() in ("unlimited", "none", "off", "no")
+
     return SerpApiSettings(
         api_key=get("SERPAPI_API_KEY") or "",
         timeout_seconds=number("SERPAPI_TIMEOUT_SECONDS", 20.0, float),
         max_results=number("SERPAPI_MAX_RESULTS", 10, int),
         max_detail_calls=number("SERPAPI_MAX_DETAIL_CALLS", 3, int),
         cache_ttl_hours=number("SERPAPI_CACHE_TTL_HOURS", 6.0, float),
-        lifetime_limit=number("SERPAPI_LIFETIME_LIMIT", None, int),
+        lifetime_limit=None if uncapped else number("SERPAPI_LIFETIME_LIMIT", None, int),
+        uncapped=uncapped,
     )
 
 
