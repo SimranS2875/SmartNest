@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "./api";
 import { AgentsView } from "./components/AgentsView";
 import { ChatPanel } from "./components/ChatPanel";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { CartView } from "./components/CartView";
 import { CompareView } from "./components/CompareView";
 import { PlanView } from "./components/PlanView";
@@ -108,7 +109,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="border-b border-line bg-white">
+      <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2.5">
             <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden><rect width="32" height="32" rx="8" fill="#0f766e" />
@@ -125,12 +126,13 @@ export default function App() {
             {health?.serpapi_quota && <Badge title="SerpApi requests used / local cap. The app makes none while running.">
               SerpApi {health.serpapi_quota.used}/{health.serpapi_quota.limit ?? "∞"}</Badge>}
             <Button onClick={newSession} disabled={busy}>New plan</Button>
+            <ThemeToggle />
           </div>
         </div>
       </header>
 
       {error && (
-        <div role="alert" className="border-b border-red-200 bg-bad-soft px-4 py-2 text-sm text-bad">
+        <div role="alert" className="border-b border-bad/30 bg-bad-soft px-4 py-2 text-sm text-bad">
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3">
             <span>{error}</span><button className="underline" onClick={() => setError(null)}>Dismiss</button>
           </div>

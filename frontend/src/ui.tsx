@@ -3,11 +3,11 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 type Tone = "neutral" | "ok" | "warn" | "bad" | "brand";
 
 const TONES: Record<Tone, string> = {
-  neutral: "bg-stone-100 text-stone-700 border-stone-200",
-  ok: "bg-ok-soft text-ok border-green-200",
-  warn: "bg-warn-soft text-warn border-amber-200",
-  bad: "bg-bad-soft text-bad border-red-200",
-  brand: "bg-brand-soft text-brand-dark border-teal-200",
+  neutral: "bg-subtle text-ink border-line",
+  ok: "bg-ok-soft text-ok border-ok/30",
+  warn: "bg-warn-soft text-warn border-warn/30",
+  bad: "bg-bad-soft text-bad border-bad/30",
+  brand: "bg-brand-soft text-brand-dark border-brand/30",
 };
 
 export function Badge({ tone = "neutral", children, title }: { tone?: Tone; children: ReactNode; title?: string }) {
@@ -26,9 +26,9 @@ type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" 
 
 export function Button({ variant = "ghost", className = "", ...rest }: BtnProps) {
   const style = {
-    primary: "bg-brand text-white hover:bg-brand-dark border-transparent",
-    ghost: "bg-white text-ink hover:bg-stone-50 border-line",
-    danger: "bg-white text-bad hover:bg-bad-soft border-line",
+    primary: "bg-fill text-white hover:bg-fill-hover border-transparent",
+    ghost: "bg-surface text-ink hover:bg-subtle border-line",
+    danger: "bg-surface text-bad hover:bg-bad-soft border-line",
   }[variant];
   return (
     <button type="button" {...rest}
@@ -51,15 +51,15 @@ export function ScoreBar({ value, label }: { value: number | null; label?: strin
   const pct = Math.max(0, Math.min(100, value));
   return (
     <div role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)} aria-label={label ?? "Utility score"}
-      className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
-      <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+      className="h-1.5 w-full overflow-hidden rounded-full bg-track">
+      <div className="h-full rounded-full bg-fill" style={{ width: `${pct}%` }} />
     </div>
   );
 }
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="rounded-xl border border-dashed border-line bg-white/60 p-8 text-center">
+    <div className="rounded-xl border border-dashed border-line bg-surface/60 p-8 text-center">
       <div className="font-medium">{title}</div>
       {children && <div className="mt-1 text-sm text-muted">{children}</div>}
     </div>

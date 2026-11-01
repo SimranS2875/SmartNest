@@ -27,13 +27,13 @@ function Thumb({ src, name }: { src: string | null; name: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
     return (
-      <div aria-hidden className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-2xl text-stone-400">
+      <div aria-hidden className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg bg-subtle text-2xl text-muted">
         ⌂
       </div>
     );
   }
   return <img src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
-    className="h-24 w-24 shrink-0 rounded-lg bg-stone-100 object-contain" />;
+    className="h-24 w-24 shrink-0 rounded-lg bg-tile object-contain ring-1 ring-line" />;
 }
 
 export function PurchaseLink({ product }: { product: { buy_url: string | null; link_label: string; simulated: boolean } }) {
@@ -73,7 +73,7 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
 
   if (!p) {
     return (
-      <article className="rounded-xl border border-dashed border-red-200 bg-bad-soft/40 p-4" data-testid={`item-${item.slot_id}`}>
+      <article className="rounded-xl border border-dashed border-bad/30 bg-bad-soft/40 p-4" data-testid={`item-${item.slot_id}`}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="font-medium">{item.category_label}</h4>
@@ -157,7 +157,7 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
       </div>
 
       {open === "why" && (
-        <div className="mt-3 rounded-lg bg-stone-50 p-3 text-sm">
+        <div className="mt-3 rounded-lg bg-subtle p-3 text-sm">
           <p>{item.why}</p>
           {item.contributions && Object.keys(item.contributions).length > 0 && (
             <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
