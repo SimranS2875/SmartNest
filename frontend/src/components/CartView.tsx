@@ -64,12 +64,12 @@ export function CartView({ cart, busy, onSetQty, onRemove, onClear, onAddPlan }:
         <Stat label="Products" value={cart.count} hint={`${cart.lines.length} line(s)`} />
         <Stat label="Stock unverified" value={cart.unverified} hint="check the retailer before buying" />
       </div>
-      <div className="h-2.5 overflow-hidden rounded-full bg-stone-200" role="meter" aria-label="Cart against budget"
+      <div className="h-2.5 overflow-hidden rounded-full bg-track" role="meter" aria-label="Cart against budget"
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)}>
-        <div className={`h-full ${cart.within_budget ? "bg-brand" : "bg-bad"}`} style={{ width: `${used}%` }} />
+        <div className={`h-full ${cart.within_budget ? "bg-fill" : "bg-bad"}`} style={{ width: `${used}%` }} />
       </div>
 
-      {cart.warnings.map((w) => <p key={w} role="alert" className="rounded-lg border border-red-200 bg-bad-soft px-3 py-2 text-sm text-bad">{w}</p>)}
+      {cart.warnings.map((w) => <p key={w} role="alert" className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">{w}</p>)}
 
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={busy} onClick={onAddPlan}>Add all plan picks</Button>

@@ -217,14 +217,14 @@ class FurnishingCoordinator(CartMixin):
                 raise PlanError("price must be a positive number")
             self._overrides.setdefault(pid, {})["price"] = float(price)
             self.beliefs.update(f"product:{pid}", "price", float(price), source="event")
-            self.log.record(COORD, "replan", f"event: {pid} price is now Rs {price:,.0f}", details=event)
+            self.log.record(COORD, "replan", f"event: {pid} price is now ₹{price:,.0f}", details=event)
         elif kind == "budget_change":
             new = event.get("total_budget")
             candidate = self._request.with_changes(total_budget=new)
             candidate.validate()
             self._request = candidate
             self.beliefs.update("user", "total_budget", float(new), source="user")
-            self.log.record(COORD, "replan", f"user changed the budget to Rs {new:,.0f}", details=event)
+            self.log.record(COORD, "replan", f"user changed the budget to ₹{new:,.0f}", details=event)
         elif kind == "preference_change":
             style = event.get("style", self._request.style)
             colour = event.get("colour", self._request.colour)
@@ -358,12 +358,12 @@ class FurnishingCoordinator(CartMixin):
                     "records": self._research[slot.profile.id]["records"], "style": req.style,
                     "colour": req.colour, "overrides": self._overrides, "themes": list(req.themes),
                     "audience": req.audience},
-                    summary=f"asked Comparison to rank {slot.label} under Rs {ceilings[slot.slot_id]:,.0f}")
+                    summary=f"asked Comparison to rank {slot.label} under ₹{ceilings[slot.slot_id]:,.0f}")
                 results[slot.slot_id] = res
                 if res["selected"] is not None:
                     open_ids.discard(slot.slot_id)
                     self.log.record("comparison", "decision",
-                                    f"{slot.label}: {res['selected']['name']} at Rs {res['selected']['price']:,.0f} "
+                                    f"{slot.label}: {res['selected']['name']} at ₹{res['selected']['price']:,.0f} "
                                     f"({res['selected']['state']}, utility {res['selected']['utility']:.1f})",
                                     details={"inspected": res["inspected"], "eligible": res.get("eligible"),
                                              "unverified": res.get("unverified")})
@@ -451,7 +451,7 @@ class FurnishingCoordinator(CartMixin):
                                     else None)
         summary["themes"] = list(req.themes)
         summary["themed_items"] = sum(1 for ln in lines.values() if (ln.get("product") or {}).get("theme_matches"))
-        self.log.record("budget", "decision", f"spend Rs {summary['spent']:,.0f} of Rs {budget:,.0f} "
+        self.log.record("budget", "decision", f"spend ₹{summary['spent']:,.0f} of ₹{budget:,.0f} "
                         f"({summary['utilisation']:.0%}); within budget: {summary['within_budget']}")
 
         notes = sorted({n for c in {s.profile.id for s in slots} for n in self._research[c]["notes"]})
@@ -514,7 +514,7 @@ class FurnishingCoordinator(CartMixin):
             res = self.bus.call("comparison", "compare", {
                 "slot": slot.to_dict(), "ceiling": room, "records": [record] if record else [],
                 "style": self._request.style, "colour": self._request.colour, "overrides": self._overrides},
-                summary=f"asked Comparison to validate the user's choice for {slot.label} (room left Rs {room:,.0f})")
+                summary=f"asked Comparison to validate the user's choice for {slot.label} (room left ₹{room:,.0f})")
             if res["selected"] is None:
                 why = (res.get("rejected_examples") or [{}])[0].get("reasons") or ["it is not valid"]
                 self._refused_choice[slot_id] = (f"that product cannot be bought for {slot.label}: {why[0]}"

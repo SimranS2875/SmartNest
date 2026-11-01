@@ -41,7 +41,7 @@ export function ChatPanel({ history, hasPlan, busy, onSend, suggestions: custom 
         {history.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[92%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
-              m.role === "user" ? "bg-brand text-white" : m.kind === "error" ? "bg-bad-soft text-bad" : "bg-white border border-line"}`}>
+              m.role === "user" ? "bg-fill text-white" : m.kind === "error" ? "bg-bad-soft text-bad" : "bg-surface border border-line"}`}>
               {m.text}
             </div>
           </div>
@@ -53,7 +53,7 @@ export function ChatPanel({ history, hasPlan, busy, onSend, suggestions: custom 
         <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
           {suggestions.map((s) => (
             <button key={s} disabled={busy} onClick={() => onSend(s)}
-              className="shrink-0 rounded-full border border-line bg-white px-3 py-1 text-xs text-muted hover:border-brand hover:text-brand-dark" title={s}>
+              className="shrink-0 rounded-full border border-line bg-surface px-3 py-1 text-xs text-muted hover:border-brand hover:text-brand-dark" title={s}>
               {s === DEMO ? "Try the 2BHK example" : s === KIDS ? "Try a child's bedroom" : s}
             </button>
           ))}
@@ -62,7 +62,7 @@ export function ChatPanel({ history, hasPlan, busy, onSend, suggestions: custom 
           <label htmlFor="chat-input" className="sr-only">Message SmartNest</label>
           <input id="chat-input" value={text} onChange={(e) => setText(e.target.value)} maxLength={1000} autoComplete="off"
             placeholder={hasPlan ? "Ask or change something…" : "What should I furnish, and your budget?"}
-            className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm placeholder:text-stone-400" />
+            className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm placeholder:text-muted/70" />
           <Button type="submit" variant="primary" disabled={busy || !text.trim()}>Send</Button>
         </form>
       </div>

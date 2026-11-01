@@ -38,7 +38,7 @@ export function PlanView({ rooms, shortlist, cartIds, busy, notes, assumptions, 
         </section>
       ))}
       {(assumptions.length > 0 || notes.length > 0) && (
-        <details className="rounded-xl border border-line bg-white p-4 text-sm">
+        <details className="rounded-xl border border-line bg-surface p-4 text-sm">
           <summary className="cursor-pointer font-medium">Assumptions and data notes</summary>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-muted">
             {[...assumptions, ...notes].map((n, i) => <li key={i}>{n}</li>)}

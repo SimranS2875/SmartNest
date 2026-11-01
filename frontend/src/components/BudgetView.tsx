@@ -1,13 +1,14 @@
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { inr, inrShort, percent } from "../format";
+import { useChartColors } from "../theme";
 import type { BudgetView as Budget } from "../types";
 import { Badge, Card, Empty, Stat } from "../ui";
 
-const PALETTE = ["#0f766e", "#d97706", "#4f46e5", "#e11d48", "#0284c7", "#65a30d", "#7c3aed"];
 
 const tip = (v: unknown) => inr(typeof v === "number" ? v : Number(v));
 
 export function BudgetView({ budget }: { budget: Budget | null }) {
+  const C = useChartColors();
   if (!budget) return <Empty title="No budget yet">Once a plan exists you will see where every rupee goes.</Empty>;
   const over = budget.spent > budget.total;
   return (
@@ -20,9 +21,9 @@ export function BudgetView({ budget }: { budget: Budget | null }) {
           hint={`${budget.counts.confirmed} confirmed · ${budget.counts.unverified} unverified · ${budget.counts.unfilled} unfilled`} />
       </div>
 
-      <div className="h-3 overflow-hidden rounded-full bg-stone-200" role="meter" aria-label="Budget used"
+      <div className="h-3 overflow-hidden rounded-full bg-track" role="meter" aria-label="Budget used"
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(budget.utilisation * 100)}>
-        <div className={`h-full ${over ? "bg-bad" : "bg-brand"}`} style={{ width: `${Math.min(100, budget.utilisation * 100)}%` }} />
+        <div className={`h-full ${over ? "bg-bad" : "bg-fill"}`} style={{ width: `${Math.min(100, budget.utilisation * 100)}%` }} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -31,26 +32,28 @@ export function BudgetView({ budget }: { budget: Budget | null }) {
           <div className="h-64" aria-hidden>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={budget.by_room} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2}>
-                  {budget.by_room.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                <Pie data={budget.by_room} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2} stroke={C.surface} strokeWidth={2}>
+                  {budget.by_room.map((_, i) => <Cell key={i} fill={C.palette[i % C.palette.length]} />)}
                 </Pie>
-                <Tooltip formatter={tip} />
-                <Legend />
+                <Tooltip formatter={tip} contentStyle={{ background: C.surface, border: `1px solid ${C.grid}`, borderRadius: 8, color: C.ink }}
+                  itemStyle={{ color: C.ink }} labelStyle={{ color: C.text }} cursor={{ fill: C.grid, opacity: 0.35 }} />
+                <Legend formatter={(v) => <span style={{ color: C.text }}>{v}</span>} />
               </PieChart>
             </ResponsiveContainer>
           </div>
         </Card>
         <Card className="p-4">
           <h3 className="font-semibold">Spend by category</h3>
-          <div className="h-64" aria-hidden>
+          <div style={{ height: Math.max(256, budget.by_category.length * 30 + 40) }} aria-hidden>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={budget.by_category} layout="vertical" margin={{ left: 24 }}>
-                <CartesianGrid horizontal={false} stroke="#e7e2db" />
-                <XAxis type="number" tickFormatter={inrShort} />
-                <YAxis type="category" dataKey="name" width={96} />
-                <Tooltip formatter={tip} />
+                <CartesianGrid horizontal={false} stroke={C.grid} />
+                <XAxis type="number" tickFormatter={inrShort} tick={{ fill: C.text }} stroke={C.grid} />
+                <YAxis type="category" dataKey="name" width={96} interval={0} tick={{ fill: C.text }} stroke={C.grid} />
+                <Tooltip formatter={tip} contentStyle={{ background: C.surface, border: `1px solid ${C.grid}`, borderRadius: 8, color: C.ink }}
+                  itemStyle={{ color: C.ink }} labelStyle={{ color: C.text }} cursor={{ fill: C.grid, opacity: 0.35 }} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                  {budget.by_category.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                  {budget.by_category.map((_, i) => <Cell key={i} fill={C.palette[i % C.palette.length]} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -64,13 +67,14 @@ export function BudgetView({ budget }: { budget: Budget | null }) {
         <div className="mt-2 h-64" aria-hidden>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={budget.allocation_vs_spend}>
-              <CartesianGrid vertical={false} stroke="#e7e2db" />
-              <XAxis dataKey="room" />
-              <YAxis tickFormatter={inrShort} />
-              <Tooltip formatter={tip} />
-              <Legend />
-              <Bar dataKey="allocated" name="Allocated" fill="#cbd5d1" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="spent" name="Spent" fill="#0f766e" radius={[4, 4, 0, 0]} />
+              <CartesianGrid vertical={false} stroke={C.grid} />
+              <XAxis dataKey="room" tick={{ fill: C.text }} stroke={C.grid} />
+              <YAxis tickFormatter={inrShort} tick={{ fill: C.text }} stroke={C.grid} />
+              <Tooltip formatter={tip} contentStyle={{ background: C.surface, border: `1px solid ${C.grid}`, borderRadius: 8, color: C.ink }}
+                  itemStyle={{ color: C.ink }} labelStyle={{ color: C.text }} cursor={{ fill: C.grid, opacity: 0.35 }} />
+              <Legend formatter={(v) => <span style={{ color: C.text }}>{v}</span>} />
+              <Bar dataKey="allocated" name="Allocated" fill={C.allocated} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="spent" name="Spent" fill={C.spent} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

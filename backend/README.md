@@ -1069,6 +1069,20 @@ left, the plan reports `minimum_total`, `shortfall` and `budget_needed`, and the
 **Remove item** on the card (for example ₹25,000 for a 10-year-old's room: the cheapest wardrobe alone is ₹12,319, the cheapest
 valid choice for all 11 items totals ₹29,581, so the wardrobe is left out and ₹30,000 is suggested).
 
+### Dark mode
+A sun/moon button in the header switches between a light and a dark theme (`frontend/src/theme.ts`, tokens in `index.css`).
+* **Follows the system on a first visit**, then remembers an explicit choice (`localStorage`, with blocked storage handled);
+  while no choice has been made it keeps following the system setting if that changes.
+* **No flash:** a tiny script in `index.html` sets `data-theme` before the first paint, and colour transitions are enabled
+  only afterwards, so a dark-mode user never sees white or a fade-in on load.
+* **Token based:** every colour is a CSS variable (`paper`, `surface`, `card`, `subtle`, `ink`, `muted`, `line`, `brand`,
+  `fill`, `ok`, `warn`, `bad` and their soft tints). Dark is a warm charcoal with a restrained teal accent; a separate `fill`
+  token keeps white-on-teal buttons readable. Product photos sit on a light tile so white-background images do not glare.
+* **Charts** (Recharts takes literal colours) use a theme-aware palette, light axis labels, a dark tooltip and neutral legends.
+* **Checked, not eyeballed:** `node e2e/dark-mode.mjs` runs a WCAG contrast audit over every visible text element (including
+  chart labels) on all five tabs in both themes. It found a real light-mode defect (the green "ok" badge was 4.47:1) which is
+  fixed; every tab now passes 4.5:1 (3:1 for large text) in both themes.
+
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
   budget). Missing ratings, sizes, styles and colours stay missing and are listed as "not stated".
@@ -1114,7 +1128,8 @@ Sessions are stored as `{request, events}` and rebuilt by replay (planning is de
   snapshot with unaltered name, price, seller and link; skipped if no snapshots).
 * `npm test` (frontend, vitest): formatting, item card states (no link for simulated data, unverified never "confirmed"),
   chat panel, budget view, API client errors.
-* `node e2e/kids-room.mjs` (a child's bedroom with themes, a vague first message, a bare-number answer) and
+* `node e2e/dark-mode.mjs` (theme toggle, persistence, contrast audit), `node e2e/tight-budget.mjs` (a budget too small
+  for everything) and `node e2e/kids-room.mjs` (a child's bedroom with themes, a vague first message, a bare-number answer) and
   `node e2e/demo.mjs` (frontend, Playwright against the running stack): 13 and 23 checks from the demo message to the agent
   monitor, a page reload and the mobile layout.
 * `node e2e/record-demo.mjs` records the ~3 minute captioned demo to `docs/demo/smartnest-demo.webm`;

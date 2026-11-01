@@ -64,7 +64,7 @@ export function AgentsView({ sessionId, refreshKey }: { sessionId: string; refre
               <div><dt className="text-muted">Requests</dt><dd className="text-base font-semibold tabular-nums">{a.requests_received}</dd></div>
               <div><dt className="text-muted">Avg reply</dt><dd className="text-base font-semibold tabular-nums">{a.avg_ms !== null ? `${a.avg_ms} ms` : "—"}</dd></div>
             </dl>
-            <div className="mt-2 text-xs text-muted">Key fingerprint <code className="rounded bg-stone-100 px-1">{a.fingerprint}</code></div>
+            <div className="mt-2 text-xs text-muted">Key fingerprint <code className="rounded bg-subtle px-1">{a.fingerprint}</code></div>
           </Card>
         ))}
       </div>
@@ -75,14 +75,14 @@ export function AgentsView({ sessionId, refreshKey }: { sessionId: string; refre
           <div role="group" aria-label="Filter events" className="flex gap-1">
             {FILTERS.map((f) => (
               <button key={f} onClick={() => setFilter(f)} aria-pressed={filter === f}
-                className={`rounded-full border px-2.5 py-0.5 text-xs ${filter === f ? "border-brand bg-brand text-white" : "border-line bg-white"}`}>{f}</button>
+                className={`rounded-full border px-2.5 py-0.5 text-xs ${filter === f ? "border-fill bg-fill text-white" : "border-line bg-surface"}`}>{f}</button>
             ))}
           </div>
         </div>
         <ol className="scroll-thin mt-3 max-h-[28rem] space-y-1.5 overflow-y-auto pr-1">
           {shown.length === 0 && <li className="text-sm text-muted">Nothing yet.</li>}
           {shown.map((e) => (
-            <li key={e.seq} className="flex gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm">
+            <li key={e.seq} className="flex gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm">
               <time className="shrink-0 pt-0.5 text-xs tabular-nums text-muted" dateTime={e.time}>{e.time.slice(11, 19)}</time>
               <Badge tone={KIND_TONE[e.kind]}>{e.kind}</Badge>
               <div className="min-w-0 flex-1">
