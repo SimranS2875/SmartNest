@@ -1140,34 +1140,22 @@ How a search works (`integrations/products/groq/`): (1) a `gpt-oss` model with t
 **2 Groq requests**.
 
 Because the answer is model-written, **the model's answer is never evidence**. Evidence is only what the search *tool* returned
-(`message.executed_tools`). From a real response each tool call is `{type, name, arguments, output, search_results}`; a
-`browser.open` call's `output` is `L1: URL: <page>` followed by that page's own text, so evidence is kept **per page**:
-* the listing's link must be a page the tool returned; a link that exists only in the model's prose is rejected;
-* the price must be printed **on the page that link points to** (not merely somewhere in the search); a page that was only
-  listed and never opened, or that was blocked ("You do not have access to this site"), vouches for nothing;
-* a rating or review count is kept only if that page prints it ("1,051" matches 1051);
-* the search engine's own pages (`exa.ai/search?...`) are never evidence of a product;
+(`executed_tools`, and the reasoning transcript when present):
+* the listing's link must be one of the pages the tool returned; a link that exists only in the model's prose is rejected;
+* the price must be printed in the tool's text; a rating or review count is kept only if it is printed too;
 * stock is never taken from the model (`unknown`, so the pick is labelled *unverified*);
-* if the tool reports pages but no prices at all, nothing is accepted (and the second request is not spent);
-* a link that is a **collection / category / search page** is labelled "Retailer listing page (shows several products)", and a
-  product is identified by link **and** name, so many products on one page are all kept.
+* if the tool reports pages but no prices at all, nothing is accepted (and the second request is not spent): a price that cannot
+  be checked is not shown;
+* a link that is a **collection / category / search page** (common in search answers: one `.../collection/sofas-under-30000`
+  link for four sofas) is labelled "Retailer listing page (shows several products)", and a product is identified by link **and**
+  name, so several products on one page are all kept.
 
-Checked against a real response (`tests/fixtures/groq_real_sample.json`, trimmed from a live run): 14 tool calls, 6 opened pages,
-111,000 characters of tool output; all 7 products in the model's answer verified against their own pages (3 product pages with
-ratings and review counts, 4 products on an Urban Ladder collection page); the blocked Flipkart page contributed nothing.
-
-**Cost and limits (important).** Every page the model opens is fed back into it as tokens, and one real search that opened six full
-product pages used **187,000 tokens** (one Amazon page alone was 34,000 characters). Groq's free tier allows **8,000 tokens a
-minute and 200,000 a day** for `gpt-oss-120b`, so a search like that can exhaust the day. Hence:
-* the search prompt tells the model to open at most 3 pages and to prefer retailer **category/collection pages** (small, many
-  products and prices per page) over single product pages, and every search reports the tokens it used;
-* a per-minute limit is waited out (the time Groq gives, up to `GROQ_MAX_WAIT_SECONDS`, at most two retries); a daily limit is
-  reported as a quota error with Groq's own "try again in ..." text instead of sleeping for minutes;
-* expect roughly one to a few live searches a day on the free tier (Groq's Dev tier raises this); everything else is served
-  from saved snapshots, so a normal plan costs nothing.
+Found from a real run (`New folder (17)` test calls): the structured search results carry only `title`, `url` and `score` (0.0),
+so prices can only be verified if the tool's text output contains them; `groq_check.py` reports exactly that. Groq documents that
+browser search cannot be combined with structured outputs and returns no citations, which is why step (2) is a separate call.
 Errors map to `GroqAuthError` (401/403), `GroqQuotaError` (429 or the optional `GROQ_REQUEST_LIMIT`), `GroqTimeoutError`; keys
 (`gsk_...`) and bearer tokens are redacted from every message. `/api/health` reports the provider and, when live search cannot
-run, the reason (for example "GROQ_API_KEY is not set"). `python src/groq_check.py "bed" --provider-only` makes one real search.
+run, the reason (for example "GROQ_API_KEY is not set").
 
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
