@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -269,7 +270,7 @@ class TestBuildRecord:
 
     def test_a_price_that_is_not_on_the_pages_is_rejected(self):
         record, reasons, _ = self.build(dict(GOOD[0], price=15999))
-        assert record is None and "not printed in the pages" in reasons[0]
+        assert record is None and "not printed on the page" in reasons[0]
 
     def test_a_rating_not_on_the_pages_is_dropped_not_kept(self):
         record, _, _ = self.build(GOOD[1])
@@ -507,3 +508,269 @@ class TestRealResponseShape:
         record = {"listing_url": LISTING_URL, "listing_url_type": "retailer_listing", "data_origin": "serpapi"}
         view = _product_view({"product_id": "x", "name": "n", "price": 1, "record": record})
         assert view["link_label"] == "Retailer listing page (shows several products)" and view["buy_url"] == LISTING_URL
+
+
+# ── The REAL response structure (fixture trimmed from a live run) and per-page evidence ───────────────────
+
+REAL = json.loads((Path(__file__).parent / "fixtures" / "groq_real_sample.json").read_text(encoding="utf-8"))["message"]
+TORQUE = "https://www.amazon.in/Torque-3-Person-Bedroom-Furniture-Warranty/dp/B0CJMK1PQC"
+CLAYTON = "https://www.pepperfry.com/product/clayton-fabric-3-seater-sofa-in-beige-chocolate-brown-color-2254086.html"
+FLIPKART = "https://www.flipkart.com/seventh-heaven-rio-3-seater-sofa/p/itm5c9c5c5c5c5c5"
+
+
+def real_allowed():
+    ev = collect(REAL)
+    allowed = AllowedUrls()
+    for u in ev.urls:
+        allowed.add(u)
+    return ev, allowed
+
+
+def build_real(item):
+    ev, allowed = real_allowed()
+    return build_record(item, allowed=allowed, evidence=ev, retrieved_at=NOW, category="sofa")
+
+
+class TestRealEvidence:
+    def test_every_page_the_search_opened_is_attributed_in_both_url_formats(self):
+        ev = collect(REAL)
+        keys = set(ev.pages)
+        assert any("B0CJMK1PQC" in k for k in keys)             # "L1: URL:" then the link on the next line
+        assert any("B0BRNCBF1Y" in k for k in keys)             # "L1: URL: <link>" on one line
+        assert any("clayton-fabric" in k for k in keys) and any("urbanladder.com/collection" in k for k in keys)
+        assert ev.attributed and ev.tools_reported == 14 and ev.shows_prices
+
+    def test_the_search_engines_own_pages_are_never_evidence(self):
+        ev = collect(REAL)
+        assert not any("exa.ai" in u for u in ev.urls) and not any("exa.ai" in k for k in ev.pages)
+
+    def test_error_outputs_are_not_pages(self):
+        ev = collect({"executed_tools": [{"type": "function", "name": "browser.open", "output": "Error: invalid link ID 1"}]})
+        assert ev.pages == {} and not ev.attributed
+
+    def test_a_blocked_page_vouches_for_nothing(self):
+        record, reasons, _ = build_real({"name": "Seventh Heaven Rio 3 Seater Sofa", "price": 21999, "currency": "INR",
+                                         "url": FLIPKART})
+        assert record is None and any("not printed on the page" in r for r in reasons)
+
+    def test_a_product_page_that_prints_the_price_is_accepted(self):
+        record, reasons, _ = build_real({"name": "Torque Jett Luxurious Fabric 3 Seater Sofa", "price": 20499, "currency": "INR",
+                                         "url": TORQUE, "rating": 3.2, "review_count": 270})
+        assert reasons == [] and record["price"] == 20499
+        assert record["listing_url_type"] == "retailer" and record["seating_capacity"] == 3
+
+    def test_the_same_price_on_a_DIFFERENT_page_does_not_count(self):
+        # 77,999 is printed on the Clayton page, not on the Torque page it is being claimed for
+        record, reasons, _ = build_real({"name": "Torque Jett", "price": 77999, "currency": "INR", "url": TORQUE})
+        assert record is None and any("not printed on the page" in r for r in reasons)
+
+    def test_a_page_that_was_only_listed_never_opened_cannot_vouch(self):
+        ev, allowed = real_allowed()
+        listed_only = [u for u in ev.urls if ev.page_text(u) is None and "amazon.in" in u][0]
+        record, reasons, _ = build_record({"name": "Some Sofa", "price": 20499, "currency": "INR", "url": listed_only},
+                                          allowed=allowed, evidence=ev, retrieved_at=NOW, category="sofa")
+        assert record is None and any("never opened this page" in r for r in reasons)
+
+    def test_a_rating_not_on_that_page_is_dropped(self):
+        record, _, _ = build_real({"name": "Torque Jett", "price": 20499, "currency": "INR", "url": TORQUE,
+                                   "rating": 4.9, "review_count": 9999})
+        assert record is not None and record["rating"] is None and record["review_count"] is None
+
+    def test_products_on_a_collection_page_are_verified_against_that_page(self):
+        url = "https://www.urbanladder.com/collection/3-seater-sofas"
+        record, _, _ = build_real({"name": "Raynor 3 Seater Wooden Sofa (In Macadamia Colour)", "price": 33999, "currency": "INR",
+                                   "url": url})
+        assert record is not None and record["listing_url_type"] == "retailer_listing"
+        assert build_real({"name": "Raynor 3 Seater Wooden Sofa", "price": 12345, "currency": "INR", "url": url})[0] is None
+
+    def test_the_model_cannot_borrow_a_price_from_another_product_on_the_answer(self):
+        assert build_real({"name": "Made up", "price": 20499, "currency": "INR", "url": "https://shop.example/x"})[0] is None
+
+
+class TestRealShapeEndToEnd:
+    def test_the_real_search_response_gives_verified_listings_only(self):
+        products = [
+            {"name": "Torque Jett Luxurious Fabric 3 Seater Sofa", "price": 20499, "currency": "INR", "url": TORQUE,
+             "rating": 3.2, "review_count": 270},
+            {"name": "Clayton Fabric 3 Seater Sofa", "price": 77999, "currency": "INR", "url": CLAYTON},
+            {"name": "Seventh Heaven Rio", "price": 21999, "currency": "INR", "url": FLIPKART},
+            {"name": "Invented Sofa", "price": 9999, "currency": "INR", "url": "https://www.fakeshop.example/sofa"}]
+        fake = FakeGroq(search=REAL, extract=extraction(products))
+        result = provider(fake).discover(ProductQuery(category="3 seater sofa"))
+        assert [r["name"].split()[0] for r in result.listings] == ["Torque", "Clayton"]
+        assert len(result.rejected) == 2 and result.api_calls == 2
+        assert all(r["availability"] == "unknown" for r in result.listings)
+
+
+# ── Rate limits: wait as long as Groq asks, then retry ──────────────────────────────────────────────────
+
+class Limited:
+    """Answers 429 ``failures`` times (with a message like Groq's), then succeeds."""
+
+    def __init__(self, failures, message="Rate limit reached ... on tokens per minute (TPM). Please try again in 6.795s.",
+                 headers=None):
+        self.failures, self.message, self.headers, self.calls = failures, message, headers or {}, 0
+
+    def __call__(self, request):
+        self.calls += 1
+        if self.calls <= self.failures:
+            return httpx.Response(429, json={"error": {"message": self.message}}, headers=self.headers)
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+
+class TestRateLimits:
+    def client(self, limited, **kw):
+        sleeps = []
+        c = GroqClient(settings(**kw), transport=httpx.MockTransport(limited), sleep=sleeps.append)
+        return c, sleeps
+
+    def test_waits_the_time_groq_gives_then_retries(self):
+        limited = Limited(1)
+        c, sleeps = self.client(limited)
+        assert c.chat([{"role": "user", "content": "x"}])["choices"][0]["message"]["content"] == "ok"
+        assert limited.calls == 2 and sleeps == [pytest.approx(7.295)] and c.waited == pytest.approx(7.295)
+
+    def test_the_retry_after_header_wins(self):
+        c, sleeps = self.client(Limited(1, headers={"retry-after": "3"}))
+        c.chat([{"role": "user", "content": "x"}])
+        assert sleeps == [3.5]
+
+    def test_it_gives_up_after_the_retries_are_used(self):
+        limited = Limited(10)
+        c, sleeps = self.client(limited)
+        with pytest.raises(GroqQuotaError):
+            c.chat([{"role": "user", "content": "x"}])
+        assert limited.calls == 3 and len(sleeps) == 2                  # one try + two retries
+
+    def test_a_long_wait_is_a_quota_error_not_a_long_sleep(self):
+        limited = Limited(5, message="Rate limit reached on tokens per day (TPD). Please try again in 3h20m1s.")
+        c, sleeps = self.client(limited)
+        with pytest.raises(GroqQuotaError) as err:
+            c.chat([{"role": "user", "content": "x"}])
+        assert sleeps == [] and limited.calls == 1 and "429" in str(err.value)
+
+    def test_no_wait_information_means_no_retry(self):
+        limited = Limited(5, message="slow down")
+        c, sleeps = self.client(limited)
+        with pytest.raises(GroqQuotaError):
+            c.chat([{"role": "user", "content": "x"}])
+        assert limited.calls == 1 and sleeps == []
+
+    def test_the_wait_cap_is_configurable(self):
+        c, sleeps = self.client(Limited(1, message="try again in 40s"), max_wait_seconds=60)
+        c.chat([{"role": "user", "content": "x"}])
+        assert sleeps == [40.5]
+
+    def test_every_attempt_counts_against_the_local_cap(self, tmp_path):
+        limited = Limited(1)
+        c, _ = self.client(limited, usage_file=tmp_path / "u.json", request_limit=5)
+        c.chat([{"role": "user", "content": "x"}])
+        assert c.ledger.used == 2
+
+    def test_the_cap_stops_a_retry_before_any_network_use(self, tmp_path):
+        limited = Limited(1)
+        c, sleeps = self.client(limited, usage_file=tmp_path / "u.json", request_limit=1)
+        with pytest.raises(GroqQuotaError) as err:
+            c.chat([{"role": "user", "content": "x"}])
+        assert limited.calls == 1 and "cap is reached" in str(err.value)
+
+    def test_the_whole_search_survives_a_per_minute_limit_between_its_two_calls(self):
+        class Fake(FakeGroq):
+            def __init__(self):
+                super().__init__(search=REAL, extract=extraction([
+                    {"name": "Torque Jett Luxurious Fabric 3 Seater Sofa", "price": 20499, "currency": "INR", "url": TORQUE}]))
+                self.limited_once = False
+
+            def __call__(self, request):
+                if "tools" not in json.loads(request.content) and not self.limited_once:     # the extraction call
+                    self.limited_once = True
+                    return httpx.Response(429, json={"error": {"message": "per minute (TPM). Please try again in 6.795s."}})
+                return super().__call__(request)
+        fake, sleeps = Fake(), []
+        s = settings()
+        prov = GroqProvider(GroqClient(s, transport=fake.transport, sleep=sleeps.append), s, clock=lambda: NOW)
+        result = prov.discover(ProductQuery(category="3 seater sofa"))
+        assert len(result.listings) == 1 and len(sleeps) == 1
+
+    @pytest.mark.parametrize("value", [-1, 500, True])
+    def test_bad_wait_settings(self, value):
+        with pytest.raises(GroqConfigError):
+            settings(max_wait_seconds=value)
+
+    def test_the_wait_setting_loads_from_the_environment(self, tmp_path):
+        s = load_groq_settings(tmp_path / "x", {"GROQ_API_KEY": KEY, "GROQ_MAX_WAIT_SECONDS": "45"})
+        assert s.max_wait_seconds == 45
+
+
+class TestPerPageRatings:
+    URL = "https://shop.example/products/oak-sofa"
+
+    def evidence(self, page):
+        tool = {"type": "browser.open", "name": "browser.open", "output": "L0: " + chr(10) + f"L1: URL: {self.URL}" + chr(10) + f"L2: {page}",
+                "search_results": {"results": [{"title": "shop.example - viewing lines [0 - 9]", "url": self.URL, "content": "", "score": 0}]}}
+        ev = collect({"executed_tools": [tool]})
+        allowed = AllowedUrls()
+        for u in ev.urls:
+            allowed.add(u)
+        return ev, allowed
+
+    def build(self, page, **item):
+        ev, allowed = self.evidence(page)
+        base = {"name": "Oak Sofa", "price": 18999, "currency": "INR", "url": self.URL}
+        return build_record({**base, **item}, allowed=allowed, evidence=ev, retrieved_at=NOW, category="sofa")[0]
+
+    def test_rating_and_reviews_printed_on_the_page_are_kept_including_grouped_numbers(self):
+        record = self.build("Oak Sofa. Price: Rs. 18,999. Rated 4.6 out of 5 by 1,051 customers.", rating=4.6, review_count=1051)
+        assert record["rating"] == 4.6 and record["review_count"] == 1051
+
+    def test_a_rating_the_page_does_not_print_is_dropped(self):
+        record = self.build("Oak Sofa. Price: Rs. 18,999.", rating=4.6, review_count=1051)
+        assert record["price"] == 18999 and record["rating"] is None and record["review_count"] is None
+
+    def test_the_price_must_be_on_the_page_not_just_anywhere(self):
+        assert self.build("Oak Sofa. Price: Rs. 12,999.") is None
+
+
+class TestPageUrlFormats:
+    """The page a tool call opened is read from its search_results entry, else from the URL line in its output."""
+    URL = "https://shop.example/products/oak-sofa"
+
+    def pages(self, output, **extra):
+        return collect({"executed_tools": [{"type": "browser.open", "name": "browser.open", "output": output, **extra}]}).pages
+
+    def test_url_on_the_same_line(self):
+        assert any("oak-sofa" in k for k in self.pages(f"L0: \nL1: URL: {self.URL}\nL2: Price Rs. 1,000"))
+
+    def test_url_on_the_next_line_with_no_search_results_at_all(self):
+        assert any("oak-sofa" in k for k in self.pages(f"L0: \nL1: URL:\nL2: {self.URL}\nL3: Price Rs. 1,000"))
+
+    def test_the_search_results_entry_names_the_page_when_the_output_does_not(self):
+        extra = {"search_results": {"results": [{"title": "x", "url": self.URL, "content": "", "score": 0}]}}
+        assert any("oak-sofa" in k for k in self.pages("no url line in this output", **extra))
+
+    def test_no_url_anywhere_means_no_attribution(self):
+        assert self.pages("L0: \nL1: something else entirely") == {}
+
+
+class TestSearchCost:
+    def test_the_prompt_limits_page_opens_and_prefers_category_pages(self):
+        from smartnest.integrations.products.groq.provider import MAX_PAGE_OPENS, search_prompt
+        text = search_prompt("3 seater sofa", 8)
+        assert f"at most {MAX_PAGE_OPENS} pages" in text and "CATEGORY or COLLECTION page" in text
+        assert "only list a product from a page you actually opened" in text.lower() and "India" in text
+
+    def test_the_tokens_a_search_used_are_reported(self):
+        class Fake(FakeGroq):
+            def __call__(self, request):
+                response = super().__call__(request)
+                if "tools" in json.loads(request.content):
+                    body = response.json()
+                    body["usage"] = {"total_tokens": 187113}
+                    return httpx.Response(200, json=body)
+                return response
+        result = provider(Fake()).discover(ProductQuery(category="bed"))
+        assert any("187,113 Groq tokens" in n for n in result.notes)
+
+    def test_a_missing_usage_block_is_fine(self):
+        result = provider(FakeGroq()).discover(ProductQuery(category="bed"))
+        assert not any("Groq tokens" in n for n in result.notes)

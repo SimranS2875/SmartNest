@@ -4,6 +4,8 @@
     GROQ_MODEL              optional, default ``openai/gpt-oss-120b``.  Browser search only works on the gpt-oss models.
     GROQ_TIMEOUT_SECONDS    optional, default 90 (a browsing session takes a while)
     GROQ_MAX_RESULTS        optional, default 8 products per search
+    GROQ_MAX_WAIT_SECONDS   optional, default 30: on a per-minute rate limit (free tier: 8,000 tokens a minute) wait the
+                            time Groq asks for, up to this long, then retry (at most twice); a longer wait is an error
     GROQ_REQUEST_LIMIT      optional cap on TOTAL Groq requests made for product search (a number), or ``unlimited``;
                             counted in ``backend/.groq_usage.json``.  One live search uses up to 2 requests.
 
@@ -44,6 +46,8 @@ class GroqSettings:
     request_limit: int | None = None
     uncapped: bool = False
     usage_file: Path | None = None           # None (tests): nothing is counted; set when loaded from the .env
+    max_wait_seconds: float = 30.0
+    max_retries: int = 2
     reasoning_effort: str = "low"            # Groq recommends low for browsing: shorter sessions, fewer tokens
     endpoint: str = ENDPOINT
 
@@ -62,6 +66,10 @@ class GroqSettings:
             raise GroqConfigError("GROQ_MAX_RESULTS must be between 1 and 20")
         if self.request_limit is not None and (isinstance(self.request_limit, bool) or self.request_limit < 0):
             raise GroqConfigError("GROQ_REQUEST_LIMIT must be a whole number >= 0 or 'unlimited'")
+        if isinstance(self.max_wait_seconds, bool) or not 0 <= self.max_wait_seconds <= 120:
+            raise GroqConfigError("GROQ_MAX_WAIT_SECONDS must be between 0 and 120")
+        if isinstance(self.max_retries, bool) or not 0 <= self.max_retries <= 5:
+            raise GroqConfigError("max_retries must be between 0 and 5")
         if self.reasoning_effort not in ("low", "medium", "high"):
             raise GroqConfigError("reasoning_effort must be low, medium or high")
 
@@ -98,6 +106,7 @@ def load_groq_settings(env_file: str | Path | None = None, environ: Mapping[str,
         model=(get("GROQ_MODEL") or "openai/gpt-oss-120b").strip(),
         timeout_seconds=number("GROQ_TIMEOUT_SECONDS", 90.0, float),
         max_results=number("GROQ_MAX_RESULTS", 8, int),
+        max_wait_seconds=number("GROQ_MAX_WAIT_SECONDS", 30.0, float),
         request_limit=None if uncapped else number("GROQ_REQUEST_LIMIT", None, int),
         uncapped=uncapped,
         usage_file=DEFAULT_USAGE_FILE,

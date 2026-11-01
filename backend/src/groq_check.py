@@ -49,6 +49,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
     ap.add_argument("--save", metavar="FILE", help="save the raw search response here")
+    ap.add_argument("--provider-only", action="store_true",
+                    help="skip the raw diagnostic search: make ONE search through the provider (half the tokens)")
     args = ap.parse_args()
     try:
         settings = load_groq_settings()
@@ -58,25 +60,26 @@ def main() -> int:
     client = GroqClient(settings)
     print(f"model {settings.model}; requests used so far: {client.ledger.used if client.ledger else 'not counted'}")
 
-    # 1. The raw search call, to see exactly what Groq returns.
-    try:
-        raw = client.chat([{"role": "system", "content": SEARCH_SYSTEM},
-                           {"role": "user", "content": search_prompt(args.query, settings.max_results)}],
-                          tools=[{"type": "browser_search"}], tool_choice="required", include_reasoning=True)
-    except GroqError as exc:
-        print(f"FAILED: {exc}")
-        return 1
-    message = raw["choices"][0]["message"]
-    print("\nmessage fields:", json.dumps(shape(message), indent=1, ensure_ascii=False))
-    ev = collect(message)
-    print(f"\nevidence: {len(ev.urls)} page link(s), {len(ev.text):,} characters of tool output, "
-          f"{ev.tools_reported} tool call(s), from {ev.sources or 'nothing'}")
-    print("rupee prices present in the tool output:", "YES" if ev.shows_prices else "NO  (prices cannot be verified)")
-    for url in ev.urls[:8]:
-        print("   ", url)
-    if args.save:
-        Path(args.save).write_text(json.dumps(raw, indent=1, ensure_ascii=False), encoding="utf-8")
-        print(f"raw response saved to {args.save}")
+    if not args.provider_only:
+        # 1. The raw search call, to see exactly what Groq returns.
+        try:
+            raw = client.chat([{"role": "system", "content": SEARCH_SYSTEM},
+                               {"role": "user", "content": search_prompt(args.query, settings.max_results)}],
+                              tools=[{"type": "browser_search"}], tool_choice="required", include_reasoning=True)
+        except GroqError as exc:
+            print(f"FAILED: {exc}")
+            return 1
+        message = raw["choices"][0]["message"]
+        print("\nmessage fields:", json.dumps(shape(message), indent=1, ensure_ascii=False))
+        ev = collect(message)
+        print(f"\nevidence: {len(ev.urls)} page link(s), {len(ev.text):,} characters of tool output, "
+              f"{ev.tools_reported} tool call(s), from {ev.sources or 'nothing'}")
+        print("rupee prices present in the tool output:", "YES" if ev.shows_prices else "NO  (prices cannot be verified)")
+        for url in ev.urls[:8]:
+            print("   ", url)
+        if args.save:
+            Path(args.save).write_text(json.dumps(raw, indent=1, ensure_ascii=False), encoding="utf-8")
+            print(f"raw response saved to {args.save}")
 
     # 2. The same query through the provider (a second search + extraction: 2 more requests).
     print("\n--- provider run (search + extraction) ---")
