@@ -25,16 +25,21 @@ await page.getByRole("log").waitFor();
 await say(PROMPT);
 await page.locator("[data-testid^=item-]").first().waitFor({ timeout: 60000 });
 const cards = await page.locator("[data-testid^=item-]").count();
-check("one room, six items (not a whole home)", cards === 6, `${cards} items`);
+check("one room, eleven items (not a whole home)", cards === 11, `${cards} items`);
 const headings = (await page.getByRole("heading", { level: 3 }).allInnerTexts()).filter((t) => /room|Kitchen|Study|Bedroom/i.test(t));
 check("only the kid's bedroom is planned", headings.length === 1 && /Kid's bedroom/.test(headings[0]), headings.join(", "));
 check("no living room or kitchen invented", (await page.getByText("Living room", { exact: true }).count()) === 0 && (await page.getByText("Kitchen", { exact: true }).count()) === 0);
 const reply = await page.getByRole("log").innerText();
 check("the assistant echoes age, budget and the plan", /10-year-old/.test(reply) && /₹50,000/.test(reply));
-check("missing categories are explained, not hidden", (await page.getByText("No listings yet").count()) >= 1);
-const search = page.getByRole("button", { name: /Search live/ }).first();
-check("live search is offered but guarded", await search.isVisible() && (await page.getByText(/switched off|allowance is used up|request\(s\) left/).count()) >= 1);
-check("items with real data are shown with prices", (await page.locator("[data-testid^=item-] .text-lg").count()) >= 2);
+check("every item is filled from real listings", (await page.locator("[data-testid^=item-] .text-lg").count()) === 11 && (await page.getByText("No listings yet").count()) === 0);
+check("no sample data in a real-data plan", (await page.getByText("Sample data", { exact: true }).count()) === 0);
+const themed = await page.getByText(/^Mentions /).allInnerTexts();
+check("themed picks say what their title mentions", themed.length >= 2 && themed.some((t) => /monster/.test(t)) && themed.some((t) => /cartoon/.test(t)), themed.join(" | "));
+await page.getByRole("tab", { name: "Budget" }).click();
+await page.getByText("Planned spend").waitFor();
+const spent = Number((await page.getByText("Planned spend").locator("xpath=following-sibling::div").first().innerText()).replace(/[^0-9]/g, ""));
+check("the plan stays inside the budget", spent > 0 && spent <= 50000, `spent ${spent}`);
+await page.getByRole("tab", { name: "Plan" }).click();
 await page.screenshot({ path: `${out}/07-kids-room.png`, fullPage: true });
 
 // A follow-up that used to build a 1BHK now just works inside the room.
@@ -54,7 +59,7 @@ await say("decorate my daughter's room, she loves unicorns");
 check("asks for the budget instead of guessing", /budget/i.test(await page.getByRole("log").innerText()) && (await page.locator("[data-testid^=item-]").count()) === 0);
 await say("40000");
 await page.locator("[data-testid^=item-]").first().waitFor({ timeout: 60000 });
-check("a bare number answers the question", (await page.locator("[data-testid^=item-]").count()) === 6);
+check("a bare number answers the question", (await page.locator("[data-testid^=item-]").count()) === 11);
 
 check("no browser console errors", problems.length === 0, problems.slice(0, 3).join(" | "));
 await browser.close();

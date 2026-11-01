@@ -59,8 +59,9 @@ SCOPE_ROOMS: dict[str, Room] = {
     "kitchen": _KITCHEN,
     "bedroom": Room("bedroom_1", "Bedroom", ("bed", "mattress", "wardrobe")),
     "kids_bedroom": Room("kids_bedroom", "Kid's bedroom",
-                         ("kids_bed", "mattress", "wardrobe", "study_table", "bookshelf", "wall_decor")),
-    "study": Room("study", "Study", ("study_table", "bookshelf")),
+                         ("kids_bed", "mattress", "wardrobe", "study_table", "study_chair", "bookshelf", "wall_decor",
+                          "table_lamp", "rug", "bean_bag", "toy_storage")),
+    "study": Room("study", "Study", ("study_table", "study_chair", "bookshelf", "table_lamp")),
 }
 ROOM_KINDS: tuple[str, ...] = tuple(SCOPE_ROOMS)
 

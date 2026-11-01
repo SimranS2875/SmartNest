@@ -32,6 +32,11 @@ CATEGORY_WORDS: dict[str, tuple[str, ...]] = {
     "study_table": ("study table", "study desk", "desk", "writing table", "computer table"),
     "bookshelf": ("bookshelf", "bookshelves", "bookcase", "book shelf", "book rack", "bookrack"),
     "wall_decor": ("wall decor", "wall art", "wall poster", "poster", "posters", "wall stickers", "decor"),
+    "study_chair": ("study chair", "desk chair", "office chair", "computer chair", "chair"),
+    "table_lamp": ("table lamp", "study lamp", "desk lamp", "night lamp", "lamp"),
+    "rug": ("rug", "carpet", "play mat", "playmat"),
+    "bean_bag": ("bean bag", "beanbag", "bean-bag"),
+    "toy_storage": ("toy storage", "toy box", "toy organizer", "toy organiser", "storage organizer", "toy rack"),
 }
 
 _NUM = r"(\d[\d,]*(?:\.\d+)?)"

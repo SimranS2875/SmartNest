@@ -46,6 +46,10 @@ QUERIES = {
     "bed": "queen size bed", "mattress": "queen size mattress", "wardrobe": "wardrobe 3 door",
     "dining_table": "4 seater dining table set", "refrigerator": "double door refrigerator 250 L",
     "tv_unit": "tv unit",
+    # a child's room (captured for the "decorate my 10 year old son's bedroom ... cartoons and monsters" request)
+    "kids_bed": "kids single bed", "study_table": "study table", "bookshelf": "bookshelf",
+    "wall_decor": "monster cartoon wall poster", "study_chair": "study chair", "table_lamp": "table lamp",
+    "rug": "kids rug", "bean_bag": "bean bag", "toy_storage": "toy storage organizer",
 }
 
 
