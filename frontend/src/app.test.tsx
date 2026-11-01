@@ -334,7 +334,7 @@ describe("items without listings and themes", () => {
     const user = userEvent.setup();
     render(<ItemCard item={noData()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: true, remaining: 4, limit: 10, used: 6 }} {...noop} />);
     expect(screen.getByText("No listings yet")).toBeInTheDocument();
-    expect(screen.getByText(/4 SerpApi request\(s\) left/)).toBeInTheDocument();
+    expect(screen.getByText(/4 request\(s\) left/)).toBeInTheDocument();
     expect(screen.getByText(/study table/, { selector: "span" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Search live for Study table" }));
     expect(noop.onSearch).toHaveBeenCalledWith("study_table");
@@ -349,7 +349,7 @@ describe("items without listings and themes", () => {
   it("disables the search when live search is switched off", () => {
     render(<ItemCard item={noData()} shortlist={[]} cartIds={[]} busy={false} live={{ enabled: false }} {...noop} />);
     expect(screen.getByRole("button", { name: /Search live/ })).toBeDisabled();
-    expect(screen.getByText(/switched off/)).toBeInTheDocument();
+    expect(screen.getByText(/Live search is not available/)).toBeInTheDocument();
   });
 
   it("shows which theme words a listing's title mentions, and nothing when none", () => {
@@ -407,7 +407,7 @@ describe("themes and live refresh controls", () => {
     const user = userEvent.setup();
     render(<ItemCard item={plain()} shortlist={[]} cartIds={[]} busy={false} live={live} {...noop} />);
     expect(screen.getByTestId("theme-note")).toHaveTextContent("Not themed");
-    await user.click(screen.getByRole("button", { name: /Search live for “princess barbie kids rug” \(1 request\)/ }));
+    await user.click(screen.getByRole("button", { name: /Search live for “princess barbie kids rug” \(1 search\)/ }));
     expect(noop.onSearch).toHaveBeenCalledWith("rug");
   });
 
@@ -445,7 +445,7 @@ describe("themes and live refresh controls", () => {
     const many = vi.fn();
     render(<PlanView rooms={[room(needy)]} live={live} onSearchMany={many} {...props} />);
     expect(screen.getByTestId("search-many")).toHaveTextContent("2 items need a live search");
-    await user.click(screen.getByRole("button", { name: "Search live for all 2 (2 requests)" }));
+    await user.click(screen.getByRole("button", { name: "Search live for all 2 (2 searches)" }));
     expect(many).toHaveBeenCalledWith(["wall_decor", "rug"]);
   });
 
@@ -468,5 +468,23 @@ describe("themes and live refresh controls", () => {
   it("disables the banner while busy", () => {
     render(<PlanView rooms={[room(needy)]} live={live} onSearchMany={vi.fn()} {...props} busy />);
     expect(screen.getByRole("button", { name: /Search live for all/ })).toBeDisabled();
+  });
+});
+
+
+describe("why live search is unavailable, and what a search costs", () => {
+  const nodata = () => item({ product: null, status: "unfilled", no_data: true, category: "study_table", category_label: "Study table", search_query: "study table", why: "none" });
+
+  it("says exactly what is missing instead of a generic message", () => {
+    render(<ItemCard item={nodata()} shortlist={[]} cartIds={[]} busy={false}
+      live={{ enabled: false, provider: "groq", reason: "GROQ_API_KEY is not set; add it to backend/.env" }} {...noop} />);
+    expect(screen.getByText(/Live search is not available: GROQ_API_KEY is not set; add it to backend\/.env/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Search live for Study table/ })).toBeDisabled();
+  });
+
+  it("names the provider when its allowance is used up", () => {
+    render(<ItemCard item={nodata()} shortlist={[]} cartIds={[]} busy={false}
+      live={{ enabled: true, provider: "groq", remaining: 0, limit: 50, used: 50 }} {...noop} />);
+    expect(screen.getByText(/The Groq allowance is used up \(50 of 50\)/)).toBeInTheDocument();
   });
 });
