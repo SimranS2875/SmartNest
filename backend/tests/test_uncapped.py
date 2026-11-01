@@ -69,7 +69,7 @@ class TestBehaviour:
         seen = []
         s = SerpApiSettings(api_key=KEY, usage_file=tmp_path / "u.json", uncapped=True)
         searcher = LiveSearcher(s, SnapshotCatalog(tmp_path / "c"), transport=self.transport(seen))
-        assert searcher.status() == {"enabled": True, "provider": "serpapi", "remaining": None, "limit": None, "used": 0, "requests_per_search": 1}
+        assert searcher.status() == {"enabled": True, "remaining": None, "limit": None, "used": 0}
         for cat in ("bookshelf", "study_table", "x_telescope", "rug"):
             searcher.search(cat)
         assert len(seen) == 4 and searcher.used == 4 and searcher.remaining is None

@@ -112,7 +112,6 @@ class ApiSettings(BaseModel):
     use_gemini: bool | Literal["auto"] = "auto"
     use_atlas: bool = False
     live_search: bool = False              # SMARTNEST_ALLOW_LIVE_SEARCH=1: allow the (quota-limited) live search button
-    search_provider: Literal["groq", "serpapi"] = "groq"   # SMARTNEST_SEARCH_PROVIDER: who does live product search
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     max_sessions: int = 200
     requests_per_minute: int = 120
@@ -140,9 +139,6 @@ class ApiSettings(BaseModel):
             "use_atlas": flag("SMARTNEST_USE_ATLAS", False),
             "live_search": flag("SMARTNEST_ALLOW_LIVE_SEARCH", False),
         }
-        provider = (env.get("SMARTNEST_SEARCH_PROVIDER") or "").strip().lower()
-        if provider in ("groq", "serpapi"):
-            values["search_provider"] = provider
         if env.get("SMARTNEST_CATALOG_DIR"):
             values["catalog_dir"] = Path(env["SMARTNEST_CATALOG_DIR"])
         if env.get("SMARTNEST_CORS_ORIGINS"):
@@ -199,19 +195,15 @@ def _build_repository(settings: ApiSettings):
 
 
 def _build_searcher(settings: ApiSettings, snapshots: SnapshotCatalog):
-    """``(searcher, reason)``: the live searcher for the configured provider, or ``None`` and why not."""
     if not settings.live_search:
-        return None, "live search is switched off (set SMARTNEST_ALLOW_LIVE_SEARCH=1)"
-    from smartnest.furnishing.live import LiveSearcher
+        return None
     try:
-        if settings.search_provider == "groq":
-            from smartnest.integrations.products.groq import load_groq_settings
-            return LiveSearcher(load_groq_settings(), snapshots), None
+        from smartnest.furnishing.live import LiveSearcher
         from smartnest.integrations.products.serpapi import load_serpapi_settings
-        return LiveSearcher(load_serpapi_settings(), snapshots), None
-    except Exception as exc:                 # the config error says what is missing, never the key
+        return LiveSearcher(load_serpapi_settings(), snapshots)
+    except Exception as exc:
         logger.warning("live search unavailable: %s", type(exc).__name__)
-        return None, str(exc)
+        return None
 
 
 def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any = "auto",
@@ -223,10 +215,7 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
         allow_sim = (not has_real) if settings.allow_simulated == "auto" else bool(settings.allow_simulated)
         catalog = LayeredCatalog(snapshots, SimulatedCatalog(), allow_simulated=allow_sim)
     llm = _build_gemini(settings) if gemini == "auto" else gemini
-    if searcher == "auto":
-        live, live_reason = _build_searcher(settings, snapshots)
-    else:
-        live, live_reason = searcher, (None if searcher is not None else "live search is not configured")
+    live = _build_searcher(settings, snapshots) if searcher == "auto" else searcher
     repo = _build_repository(settings) if repository == "auto" else repository
     registry = SessionRegistry(lambda: FurnishingCoordinator(catalog), repository=repo, max_sessions=settings.max_sessions)
     assistant = ChatAssistant(llm)
@@ -275,8 +264,7 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
             pass
         return {"status": "ok", "gemini": llm is not None, "persistence": "mongodb" if repo is not None else "memory",
                 "serpapi_quota": quota, "sessions": len(registry),
-                "live_search": live.status() if live is not None else {
-                    "enabled": False, "provider": settings.search_provider, "reason": live_reason},
+                "live_search": live.status() if live is not None else {"enabled": False},
                 "catalog": {"simulated_allowed": getattr(catalog, "allow_simulated", False)}}
 
     @app.get("/api/catalog")
@@ -339,8 +327,8 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
         from smartnest.furnishing.live import LiveSearchError
         session = session_of(session_id)
         if live is None:
-            return JSONResponse({"detail": f"Live search is not available: {live_reason}.", "code": "disabled"},
-                                status_code=409)
+            return JSONResponse({"detail": "Live search is switched off. Set SMARTNEST_ALLOW_LIVE_SEARCH=1 "
+                                           "(and a SerpApi key) to enable it."}, status_code=409)
         with session.lock:
             if session.plan is None:
                 raise PlanError("there is no plan yet")

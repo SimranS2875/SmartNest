@@ -29,7 +29,7 @@ export function PlanView({ rooms, shortlist, cartIds, busy, notes, assumptions, 
           <span><strong>{needing.length} items</strong> need a live search (nothing saved, or nothing matching your theme).</span>
           <button type="button" disabled={busy} onClick={() => onSearchMany(needing)}
             className="rounded-lg bg-fill px-3 py-1.5 font-medium text-white hover:bg-fill-hover disabled:opacity-60">
-            Search live for all {needing.length} ({needing.length} searches)
+            Search live for all {needing.length} ({needing.length} requests)
           </button>
         </div>
       )}

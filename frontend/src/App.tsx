@@ -73,18 +73,10 @@ export default function App() {
     await api.shortlist(sid, productId);
     setSession(await api.getSession(sid));
   });
-  /** " (about 2 Groq requests, 40 left)": what a number of searches costs at the current provider. */
-  const costNote = (searches: number): string => {
-    const live = health?.live_search;
-    if (!live) return "";
-    const per = live.requests_per_search ?? 1;
-    const name = live.provider === "groq" ? "Groq" : "SerpApi";
-    const left = live.remaining != null ? `, ${live.remaining} left` : "";
-    return ` (about ${searches * per} ${name} request${searches * per === 1 ? "" : "s"}${left})`;
-  };
   const searchLive = (category: string) => {
     if (!sid) return;
-    const ok = window.confirm(`Search the web live for this category? This uses 1 search${costNote(1)}.`);
+    const left = health?.live_search?.remaining;
+    const ok = window.confirm(`Search the live shopping API for this category? This uses 1 SerpApi request${left != null ? ` (${left} left)` : ""}.`);
     if (!ok) return;
     void guarded(async () => {
       const r = await api.search(sid, category);
@@ -94,7 +86,8 @@ export default function App() {
   };
   const searchMany = (categories: string[]) => {
     if (!sid || categories.length === 0) return;
-    const ok = window.confirm(`Search the web live for ${categories.length} categories? This uses ${categories.length} searches${costNote(categories.length)}.`);
+    const left = health?.live_search?.remaining;
+    const ok = window.confirm(`Search the live shopping API for ${categories.length} categories? This uses ${categories.length} SerpApi requests${left != null ? ` (${left} left)` : ""}.`);
     if (!ok) return;
     void guarded(async () => {
       for (const category of categories) {            // one at a time, so a failure stops the run and nothing more is spent
@@ -143,10 +136,8 @@ export default function App() {
               : origins.length > 0 && <Badge tone="bad" title="No real snapshots found; listings are invented samples">Sample data only</Badge>}
             {health && <Badge tone={health.gemini ? "brand" : "neutral"}>{health.gemini ? "Gemini on" : "Gemini off"}</Badge>}
             {health && <Badge>{health.persistence === "mongodb" ? "MongoDB" : "In-memory"}</Badge>}
-            {health?.live_search?.enabled
-              ? <Badge title={`Live search runs on ${health.live_search.provider === "groq" ? "Groq" : "SerpApi"}. Requests used / cap. Nothing is searched unless you click.`}>
-                  {health.live_search.provider === "groq" ? "Groq" : "SerpApi"} {health.live_search.used ?? 0}/{health.live_search.limit ?? "∞"}</Badge>
-              : health && <Badge tone="neutral" title={health.live_search?.reason ?? "Live search is off"}>Live search off</Badge>}
+            {health?.serpapi_quota && <Badge title="SerpApi requests used / local cap. The app makes none while running.">
+              SerpApi {health.serpapi_quota.used}/{health.serpapi_quota.limit ?? "∞"}</Badge>}
             <Button onClick={newSession} disabled={busy}>New plan</Button>
             <ThemeToggle />
           </div>

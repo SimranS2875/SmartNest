@@ -222,9 +222,6 @@ export interface LiveStatus {
   remaining?: number | null;
   limit?: number | null;
   used?: number;
-  provider?: "groq" | "serpapi";
-  requests_per_search?: number;
-  reason?: string;
 }
 
 export interface CatalogInfo {
