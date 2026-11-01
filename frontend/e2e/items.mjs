@@ -27,7 +27,22 @@ const telescope = page.getByTestId("item-shopping_list.x_telescope");
 check("the unknown thing became its own item", await telescope.isVisible());
 check("with no data it says so instead of inventing a product", /No listings yet/.test(await telescope.innerText()) && (await telescope.locator(".text-lg").count()) === 0);
 check("it names the search it would run", /telescope/.test(await telescope.innerText()));
-check("the search is offered but guarded", await telescope.getByRole("button", { name: /Search live/ }).isDisabled());
+const health = await (await page.request.get(`${base}/api/health`)).json();
+const searchBtn = telescope.getByRole("button", { name: /Search live/ });
+if (health.live_search?.enabled) {
+  // Live search is on: the button works, asks before spending, and cancelling spends nothing.
+  const usedBefore = health.serpapi_quota?.used;
+  let asked = "";
+  page.once("dialog", async (d) => { asked = d.message(); await d.dismiss(); });
+  check("live search is on: the button is enabled", await searchBtn.isEnabled());
+  await searchBtn.click();
+  await page.waitForTimeout(500);
+  check("it asks before spending a request", /1 SerpApi request/.test(asked), asked);
+  const after = await (await page.request.get(`${base}/api/health`)).json();
+  check("cancelling spends nothing", after.serpapi_quota?.used === usedBefore && (await telescope.innerText()).includes("No listings yet"));
+} else {
+  check("the search is offered but guarded", await searchBtn.isDisabled());
+}
 const bed = page.getByTestId("item-shopping_list.bed");
 check("the known thing uses real data", (await bed.locator(".text-lg").count()) === 1 && /Real listing/.test(await bed.innerText()));
 const chat = await page.getByRole("log").innerText();

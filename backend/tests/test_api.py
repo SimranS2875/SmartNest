@@ -252,3 +252,23 @@ class TestHardening:
         for item in body["plan"]["items"]:
             assert item["product"]["simulated"] and item["product"]["buy_url"] is None
             assert all(a["buy_url"] is None for a in item["alternatives"])
+
+
+class TestSettingsFromEnvFile:
+    def test_the_env_file_is_read_and_the_real_environment_wins(self, tmp_path, monkeypatch):
+        f = tmp_path / ".env"
+        f.write_text("SMARTNEST_ALLOW_LIVE_SEARCH=1\nSMARTNEST_USE_GEMINI=0\nSMARTNEST_CORS_ORIGINS=http://a.example\n",
+                     encoding="utf-8")
+        monkeypatch.delenv("SMARTNEST_ALLOW_LIVE_SEARCH", raising=False)
+        monkeypatch.setenv("SMARTNEST_USE_GEMINI", "1")
+        s = ApiSettings.from_env(env_file=f)
+        assert s.live_search is True and s.use_gemini is True and s.cors_origins == ["http://a.example"]
+
+    def test_an_explicit_environ_ignores_any_file(self, tmp_path):
+        f = tmp_path / ".env"
+        f.write_text("SMARTNEST_ALLOW_LIVE_SEARCH=1\n", encoding="utf-8")
+        assert ApiSettings.from_env({}, env_file=f).live_search is False
+
+    def test_a_missing_file_is_fine_and_live_search_defaults_off(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SMARTNEST_ALLOW_LIVE_SEARCH", raising=False)
+        assert ApiSettings.from_env(env_file=tmp_path / "nope.env").live_search is False
