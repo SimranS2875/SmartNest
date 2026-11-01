@@ -39,3 +39,11 @@ frontend/dist/
 frontend/e2e/shots/
 docs/demo/*.webm
 frontend/e2e/_video/
+
+# Scratch folder with API test scripts (contains a key): never commit
+New folder (17)/
+New folder*/
+
+# Groq usage counter and raw probe output
+backend/.groq_usage.json
+backend/.groq_probe*.json

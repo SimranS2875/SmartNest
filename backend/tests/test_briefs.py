@@ -454,7 +454,8 @@ class TestLiveSearchApi:
 
     def test_health_when_it_is_off(self, tmp_path):
         client, _, _ = self.started(tmp_path, searcher=None)
-        assert client.get("/api/health").json()["live_search"] == {"enabled": False}
+        status = client.get("/api/health").json()["live_search"]
+        assert status["enabled"] is False and status["reason"]
 
     def test_a_search_fills_the_item_and_replans(self, tmp_path):
         client, body, fake = self.started(tmp_path)
@@ -489,7 +490,7 @@ class TestLiveSearchApi:
     def test_switched_off_is_a_409(self, tmp_path):
         client, body, _ = self.started(tmp_path, searcher=None)
         r = client.post(f"/api/sessions/{body['id']}/search", json={"category": "study_table"})
-        assert r.status_code == 409 and "switched off" in r.json()["detail"]
+        assert r.status_code == 409 and r.json()["code"] == "disabled" and "not available" in r.json()["detail"]
 
     def test_a_failed_search_is_a_502_and_changes_nothing(self, tmp_path):
         client, body, _ = self.started(tmp_path, error=LiveSearchError("failed", "The search did not work"))

@@ -110,6 +110,7 @@ def _product_view(option: dict[str, Any]) -> dict[str, Any]:
         "buy_url": None if simulated else listing_url,
         "link_label": ("Sample listing - not a real product" if simulated else
                        "Retailer page" if url_type == "retailer" else
+                       "Retailer listing page (shows several products)" if url_type == "retailer_listing" else
                        "Google Shopping page" if url_type else "No link available"),
         "url_type": url_type, "rating": r.get("rating"), "review_count": r.get("review_count"),
         "seating_capacity": r.get("seating_capacity"), "retrieved_at": r.get("verified_at"),

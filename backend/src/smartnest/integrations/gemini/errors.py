@@ -15,6 +15,9 @@ _MAX_LENGTH = 400
 
 # Strings that look like Google API keys, even if they are not the configured one.
 _GOOGLE_KEY = re.compile(r"AIza[0-9A-Za-z_\-]{20,}")
+# Groq keys (gsk_...) and bearer tokens, wherever they appear.
+_GROQ_KEY = re.compile(r"gsk_[0-9A-Za-z]{16,}")
+_BEARER = re.compile(r"(Bearer\s+)[^\s\"']+", re.IGNORECASE)
 _KEY_PARAM = re.compile(r"([?&](?:key|api_key|apikey)=)[^&\s\"']+", re.IGNORECASE)
 
 
@@ -24,6 +27,8 @@ def redact_secrets(text: str, secrets: Iterable[str] = ()) -> str:
         if secret and len(secret) >= 8:
             text = text.replace(secret, MASK)
     text = _GOOGLE_KEY.sub(MASK, text)
+    text = _GROQ_KEY.sub(MASK, text)
+    text = _BEARER.sub(rf"\1{MASK}", text)
     text = _KEY_PARAM.sub(rf"\1{MASK}", text)
     if len(text) > _MAX_LENGTH:
         text = text[:_MAX_LENGTH] + "..."

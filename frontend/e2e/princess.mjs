@@ -47,12 +47,12 @@ if (live?.enabled) {
   page.once("dialog", async (d) => { asked = d.message(); await d.dismiss(); });
   await page.getByRole("button", { name: /Search live for all 2/ }).click();
   await page.waitForTimeout(500);
-  check("it asks first and names the cost", /2 categories/.test(asked) && /2 SerpApi requests/.test(asked), asked);
+  check("it asks first and names the cost", /2 categories/.test(asked) && /2 searches/.test(asked), asked);
   await decor.getByRole("button", { name: /Search live/ }).isEnabled();
   await rug.getByRole("button", { name: /Search live for/ }).waitFor();
   check("each item has its own search button too", true);
   const after = (await (await page.request.get(`${base}/api/health`)).json());
-  check("cancelling spent nothing", after.serpapi_quota?.used === before.serpapi_quota?.used, `${before.serpapi_quota?.used} -> ${after.serpapi_quota?.used}`);
+  check("cancelling spent nothing", after.live_search?.used === before.live_search?.used, `${before.live_search?.used} -> ${after.live_search?.used}`);
   // the refresh control exists on a normal item
   const bed = page.getByTestId("item-kids_bedroom.kids_bed");
   await bed.getByRole("button", { name: "Why this?" }).click();

@@ -85,12 +85,12 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <Button variant="primary" disabled={busy || !live?.enabled || live.remaining === 0}
               onClick={() => onSearch(item.category)} aria-label={`Search live for ${item.category_label}`}>
-              Search live (1 request)
+              Search live (1 search)
             </Button>
             <span className="text-xs text-muted">
-              {!live?.enabled ? "Live search is switched off (set SMARTNEST_ALLOW_LIVE_SEARCH=1)."
-                : live.remaining === 0 ? `The SerpApi allowance is used up (${live.used} of ${live.limit}).`
-                : live.remaining != null ? `${live.remaining} SerpApi request(s) left.` : "Uses one SerpApi request."}
+              {!live?.enabled ? `Live search is not available${live?.reason ? `: ${live.reason}` : ""}.`
+                : live.remaining === 0 ? `The ${live.provider === "groq" ? "Groq" : "SerpApi"} allowance is used up (${live.used} of ${live.limit}).`
+                : live.remaining != null ? `${live.remaining} request(s) left.` : "Uses one live search."}
               {item.search_query ? ` Searches for “${item.search_query}”.` : ""}
             </span>
           </div>
@@ -145,7 +145,7 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
           <strong>Not themed:</strong> no saved listing mentions your theme, so this is a plain pick.
           {live?.enabled && item.search_query ? (
             <> <button type="button" disabled={busy} onClick={() => onSearch(item.category)}
-              className="font-medium underline underline-offset-2 disabled:opacity-60">Search live for “{item.search_query}” (1 request)</button></>
+              className="font-medium underline underline-offset-2 disabled:opacity-60">Search live for “{item.search_query}” (1 search)</button></>
           ) : item.search_query ? <> A themed search would be “{item.search_query}”.</> : null}
         </div>
       )}
@@ -183,7 +183,7 @@ export function ItemCard({ item, shortlist, cartIds, busy, live, raiseTo, onRais
           <div className="mt-2 flex flex-wrap gap-1.5">
             {live?.enabled && (
               <Button disabled={busy} onClick={() => onSearch(item.category)} aria-label={`Refresh ${item.category_label} listings`}>
-                Refresh listings (1 request)
+                Refresh listings (1 search)
               </Button>
             )}
             <Button variant="danger" disabled={busy} onClick={() => onOutOfStock(p.product_id)}>Mark out of stock</Button>

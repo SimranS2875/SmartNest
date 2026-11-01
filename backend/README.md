@@ -147,7 +147,7 @@ cd backend
 python -m pytest
 ```
 
-2541 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 635 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
+2644 tests covering all modules (302 from Assignments 1.2–3.1, 167 for Assignment 3.2, 156 for the MongoDB layer, 340 for Assignment 4.1, 386 for Assignment 4.2, 176 for SerpApi, 130 net for optional dimensions, 110 net for optional attributes, 139 for agent security, 635 for the furnishing layer, chat, API, cart, briefs, live search and real-catalog end-to-end), plus 28 optional tests that need live services and are skipped by default (`SMARTNEST_RUN_ATLAS_TESTS=1` for Atlas, `SMARTNEST_RUN_LIVE_TESTS=1` for Gemini, `SMARTNEST_RUN_SERPAPI_TESTS=1` for SerpApi).
 
 ## Architecture
 
@@ -1128,6 +1128,34 @@ listings, **Search live for the themed query** on a "Not themed" pick, **Refresh
 panel (to re-fetch fresh data for any category), and one banner, **Search live for all N (N requests)**, that runs them one at a
 time (a failure stops the run) after a single confirmation that states the cost. Everything else is served from saved snapshots, by design,
 so a normal plan costs no request.
+
+### Live search with Groq (browser search)
+Live product search now runs on **Groq browser search** (`SMARTNEST_SEARCH_PROVIDER=groq`, the default; `serpapi` is still
+supported behind the same `LiveSearcher`). Setup: put `GROQ_API_KEY` in `backend/.env`, set `SMARTNEST_ALLOW_LIVE_SEARCH=1`.
+`python src/groq_check.py "3 seater sofa"` runs one real search and prints what Groq returned (fields, page links, whether prices
+appear in the tool output) and what SmartNest accepted or rejected.
+
+How a search works (`integrations/products/groq/`): (1) a `gpt-oss` model with the `browser_search` tool searches Indian shops;
+(2) a second, tool-free call turns the answer into JSON; (3) every listing is checked before it is accepted. One live search is
+**2 Groq requests**.
+
+Because the answer is model-written, **the model's answer is never evidence**. Evidence is only what the search *tool* returned
+(`executed_tools`, and the reasoning transcript when present):
+* the listing's link must be one of the pages the tool returned; a link that exists only in the model's prose is rejected;
+* the price must be printed in the tool's text; a rating or review count is kept only if it is printed too;
+* stock is never taken from the model (`unknown`, so the pick is labelled *unverified*);
+* if the tool reports pages but no prices at all, nothing is accepted (and the second request is not spent): a price that cannot
+  be checked is not shown;
+* a link that is a **collection / category / search page** (common in search answers: one `.../collection/sofas-under-30000`
+  link for four sofas) is labelled "Retailer listing page (shows several products)", and a product is identified by link **and**
+  name, so several products on one page are all kept.
+
+Found from a real run (`New folder (17)` test calls): the structured search results carry only `title`, `url` and `score` (0.0),
+so prices can only be verified if the tool's text output contains them; `groq_check.py` reports exactly that. Groq documents that
+browser search cannot be combined with structured outputs and returns no citations, which is why step (2) is a separate call.
+Errors map to `GroqAuthError` (401/403), `GroqQuotaError` (429 or the optional `GROQ_REQUEST_LIMIT`), `GroqTimeoutError`; keys
+(`gsk_...`) and bearer tokens are redacted from every message. `/api/health` reports the provider and, when live search cannot
+run, the reason (for example "GROQ_API_KEY is not set").
 
 ### Honesty rules (tested)
 * A pick is **confirmed** only if its listing states it is in stock; otherwise it is **unverified** (still counted in the
