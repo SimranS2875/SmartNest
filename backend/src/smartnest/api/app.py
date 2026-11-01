@@ -168,6 +168,20 @@ class RateLimiter:
 
 # ── Factory ──────────────────────────────────────────────────────────────────
 
+def client_address(request: Request) -> str:
+    """The caller's address for rate limiting.
+
+    On Vercel every request arrives through the platform's proxy, so ``request.client`` is the proxy and would put all
+    visitors in one bucket.  Vercel sets ``X-Forwarded-For`` itself (it replaces any value the visitor sent), so there
+    (and only there, when ``VERCEL`` is set) its first address is the visitor.  Anywhere else the header is untrusted.
+    """
+    if os.environ.get("VERCEL"):
+        first = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if first:
+            return first
+    return request.client.host if request.client else "?"
+
+
 def _build_gemini(settings: ApiSettings):
     if settings.use_gemini is False:
         return None
@@ -228,7 +242,7 @@ def create_app(settings: ApiSettings | None = None, *, catalog=None, gemini: Any
 
     @app.middleware("http")
     async def throttle(request: Request, call_next):
-        if request.method == "POST" and not limiter.allow(request.client.host if request.client else "?"):
+        if request.method == "POST" and not limiter.allow(client_address(request)):
             return JSONResponse({"detail": "too many requests, slow down"}, status_code=429)
         return await call_next(request)
 

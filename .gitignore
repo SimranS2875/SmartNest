@@ -31,7 +31,7 @@ backend/.serpapi_usage.json
 # Agent private keys (Assignment 5.1): never commit
 backend/keys/
 *.pem
-backend/data/
+# backend/data/ (saved product snapshots) is committed: the Vercel deployment builds from GitHub and needs it
 
 # Frontend
 frontend/node_modules/
