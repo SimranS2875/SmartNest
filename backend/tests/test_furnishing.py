@@ -465,3 +465,24 @@ class TestUserChoices:
         c, _ = planned()
         with pytest.raises(PlanError):
             c.handle_event({"type": "choose_product", "slot_id": "nowhere.sofa", "product_id": "x"})
+
+
+class TestLeftoverIsNotWasted:
+    @pytest.mark.parametrize("budget", [40000, 60000, 80000, 100000, 120000, 160000])
+    def test_an_item_stays_unfilled_only_if_the_remaining_money_cannot_buy_it(self, budget):
+        c, plan = planned(budget, 2)
+        remaining = plan.summary["remaining"]
+        for line in plan.lines.values():
+            if line["status"] != "unfilled":
+                continue
+            slot = next(s for s in c._slots if s.slot_id == line["slot_id"])
+            buyable = [r for r in c._research[line["category"]]["records"]
+                       if r["price"] <= remaining and r["availability"] != "out_of_stock"
+                       and (not slot.profile.needs_seating or r["seating_capacity"] is None
+                            or r["seating_capacity"] >= slot.min_seating)]
+            assert not buyable, f"{line['label']} is unfilled although {buyable[0]['name']} costs {buyable[0]['price']}"
+
+    def test_the_greedy_fill_never_breaks_the_budget(self):
+        for budget in range(30000, 200001, 10000):
+            _, plan = planned(budget, 2)
+            assert plan.summary["spent"] <= budget + 1e-6

@@ -311,6 +311,23 @@ class FurnishingCoordinator:
                 summary="asked Budget to share unspent money with unfilled items")["ceilings"])
             self.log.record("budget", "decision", f"{len(open_ids)} item(s) unfilled; re-sharing the leftover budget")
 
+        # An even split of the leftover can leave every open item just short.  Offer the whole remainder to the open
+        # items one at a time, in plan order, so the money buys something rather than sitting unused.
+        for slot in slots:
+            if slot.slot_id not in open_ids:
+                continue
+            spent = sum(r["selected"]["price"] for r in results.values() if r.get("selected"))
+            room = round(budget - spent, 2)
+            res = self.bus.call("comparison", "compare", {
+                "slot": slot.to_dict(), "ceiling": room, "records": self._research[slot.profile.id]["records"],
+                "style": req.style, "colour": req.colour, "overrides": self._overrides},
+                summary=f"asked Comparison to try {slot.label} with all remaining money ({inr(room)})")
+            if res["selected"] is not None:
+                results[slot.slot_id] = res
+                ceilings[slot.slot_id] = room
+                open_ids.discard(slot.slot_id)
+                self.log.record("budget", "decision", f"{slot.label}: filled from the leftover budget ({inr(room)} available)")
+
         self._apply_choices(slots, results, budget)
 
         lines: dict[str, dict[str, Any]] = {}
