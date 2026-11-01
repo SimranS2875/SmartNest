@@ -824,9 +824,12 @@ class TestLifetimeLimit:
             client.search("a")
         assert fake.requests == []
 
-    def test_no_limit_still_counts_but_never_refuses(self, tmp_path):
+    def test_default_settings_touch_no_usage_file(self):
+        assert SerpApiClient(settings(), transport=FakeSerpApi().transport).ledger is None
+
+    def test_a_cap_removed_on_purpose_still_counts_but_never_refuses(self, tmp_path):
         fake = FakeSerpApi()
-        client = SerpApiClient(settings(usage_file=tmp_path / "u.json"), transport=fake.transport)
+        client = SerpApiClient(settings(usage_file=tmp_path / "u.json", uncapped=True), transport=fake.transport)
         for i in range(5):
             client.search(f"q{i}")
         assert client.ledger.used == 5 and len(fake.requests) == 5
