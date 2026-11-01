@@ -1,0 +1,217 @@
+// Shapes returned by the SmartNest API (backend/src/smartnest/api).
+
+export type ItemStatus = "confirmed" | "unverified" | "unfilled";
+
+export interface Product {
+  product_id: string;
+  name: string;
+  price: number;
+  retailer: string | null;
+  image_url: string | null;
+  data_origin: "serpapi" | "simulated";
+  simulated: boolean;
+  buy_url: string | null;
+  link_label: string;
+  url_type: string | null;
+  rating: number | null;
+  review_count: number | null;
+  seating_capacity: number | null;
+  retrieved_at: string | null;
+  availability: string | null;
+}
+
+export interface Alternative extends Product {
+  state: "confirmed" | "unverified";
+  utility: number | null;
+  completeness: number | null;
+  gaps: string[];
+}
+
+export interface PlanItem {
+  slot_id: string;
+  room_id: string;
+  room: string;
+  category: string;
+  category_label: string;
+  label: string;
+  ceiling: number;
+  status: ItemStatus;
+  user_choice?: boolean;
+  product: Product | null;
+  utility: number | null;
+  completeness: number | null;
+  unavailable?: string[];
+  gaps?: string[];
+  fit?: string | null;
+  components?: Record<string, number>;
+  weights?: Record<string, number>;
+  contributions?: Record<string, number>;
+  alternatives: Alternative[];
+  why: string;
+  inspected: number;
+  dropped_accessories: number;
+  data_origin: string;
+}
+
+export interface Summary {
+  total_budget: number;
+  spent: number;
+  remaining: number;
+  utilisation: number;
+  within_budget: boolean;
+  by_room: Record<string, number>;
+  by_category: Record<string, number>;
+  unfilled: string[];
+  confirmed: number;
+  unverified: number;
+  unfilled_count: number;
+  items: number;
+}
+
+export interface Plan {
+  request: { total_budget: number; bedrooms: number; style: string | null; colour: string | null };
+  version: number;
+  updated_at: string;
+  assumptions: string[];
+  items: PlanItem[];
+  summary: Summary;
+  data_notes: string[];
+}
+
+export interface RoomView {
+  room_id: string;
+  label: string;
+  spent: number;
+  allocated: number;
+  filled: number;
+  count: number;
+  items: PlanItem[];
+}
+
+export interface BudgetView {
+  total: number;
+  spent: number;
+  remaining: number;
+  utilisation: number;
+  within_budget: boolean;
+  by_room: { name: string; value: number }[];
+  by_category: { name: string; value: number }[];
+  items: { label: string; room: string; category: string; ceiling: number; price: number | null; status: ItemStatus }[];
+  allocation_vs_spend: { room: string; allocated: number; spent: number }[];
+  counts: { confirmed: number; unverified: number; unfilled: number };
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  kind: string;
+  time: string;
+}
+
+export interface Transition {
+  time: string;
+  slot_id: string;
+  label: string;
+  kind: string;
+  before: string | null;
+  after: string | null;
+  reason: string;
+}
+
+export interface SessionView {
+  id: string;
+  created_at: string;
+  has_plan: boolean;
+  plan: Plan | null;
+  rooms: RoomView[];
+  budget: BudgetView | null;
+  shortlist: string[];
+  transitions: Transition[];
+  history: ChatMessage[];
+  draft: Record<string, unknown>;
+}
+
+export interface Reply {
+  text: string;
+  kind: string;
+  changed: boolean;
+  needs: string[];
+  wording: "rules" | "gemini";
+}
+
+export interface ActivityEvent {
+  seq: number;
+  time: string;
+  agent: string;
+  kind: "message" | "decision" | "info" | "warning" | "replan";
+  summary: string;
+  peer: string | null;
+  task: string | null;
+  verified: boolean | null;
+  duration_ms: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface AgentInfo {
+  id: string;
+  role: "coordinator" | "worker";
+  actions: number;
+  requests_received: number;
+  avg_ms: number | null;
+  fingerprint: string | null;
+}
+
+export interface Activity {
+  agents: AgentInfo[];
+  security: { accepted: number; rejected: number; by_code: Record<string, number> };
+  messages: number;
+  unverified_messages: number;
+  total_events: number;
+  events: ActivityEvent[];
+}
+
+export interface Health {
+  status: string;
+  gemini: boolean;
+  persistence: string;
+  serpapi_quota: { used: number; limit: number | null } | null;
+  sessions: number;
+  catalog: { simulated_allowed: boolean };
+}
+
+export interface CatalogInfo {
+  categories: { category: string; label: string; origin: string; listings: number; retrieved_at: string | null }[];
+}
+
+export interface OptionRow {
+  product_id: string;
+  name: string;
+  price: number;
+  retailer: string | null;
+  rating: number | null;
+  availability: string | null;
+  fits_budget: boolean;
+  is_pick: boolean;
+}
+
+export interface Options {
+  slot_id: string;
+  label: string;
+  budget_available: number;
+  options: OptionRow[];
+}
+
+export interface CompareProduct extends Alternative {
+  item: string;
+  slot_id: string;
+  is_pick: boolean;
+  contributions: Record<string, number> | null;
+}
+
+export type EventBody =
+  | { type: "budget_change"; total_budget: number }
+  | { type: "out_of_stock"; product_id: string }
+  | { type: "remove_item"; slot_id: string }
+  | { type: "choose_product"; slot_id: string; product_id: string }
+  | { type: "clear_choice"; slot_id: string }
+  | { type: "preference_change"; style?: string | null; colour?: string | null };
