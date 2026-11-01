@@ -221,6 +221,20 @@ class TestHardening:
         assert codes[:5] == [201] * 5 and set(codes[5:]) == {429}
         assert c.get("/api/health").status_code == 200            # reads are not throttled
 
+    def test_rate_limit_is_per_visitor_behind_the_vercel_proxy(self, monkeypatch):
+        monkeypatch.setenv("VERCEL", "1")
+        c = TestClient(make_app(requests_per_minute=2))
+        a, b = {"x-forwarded-for": "203.0.113.5, 10.0.0.1"}, {"x-forwarded-for": "198.51.100.7"}
+        assert [c.post("/api/sessions", json={}, headers=a).status_code for _ in range(3)] == [201, 201, 429]
+        assert c.post("/api/sessions", json={}, headers=b).status_code == 201        # another visitor is unaffected
+
+    def test_the_forwarded_header_is_ignored_off_vercel(self, monkeypatch):
+        monkeypatch.delenv("VERCEL", raising=False)
+        c = TestClient(make_app(requests_per_minute=2))
+        codes = [c.post("/api/sessions", json={}, headers={"x-forwarded-for": f"198.51.100.{i}"}).status_code
+                 for i in range(3)]
+        assert codes == [201, 201, 429]                       # a visitor cannot dodge the limit by faking the header
+
     def test_cors_allows_only_the_dev_origins(self, client):
         ok = client.options("/api/sessions", headers={"Origin": "http://localhost:5173",
                                                        "Access-Control-Request-Method": "POST"})
