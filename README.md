@@ -4,8 +4,6 @@
 
 ### Tell it what to furnish. It plans every room with real products, honest scores, and a budget it will never break.
 
-*Bhaukaal planning, imaandari wale numbers.*
-
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
@@ -197,6 +195,6 @@ The deep technical write-up (every design decision, every rule, per-assignment n
 
 **Built as a multi-agent systems project: reflex agents → worker threads → TCP messaging → Contract Net → utility optimization → BDI → knowledge + live data → Ed25519 security → a full-stack app.**
 
-*Real products. Real numbers. No jugaad in the maths.*
+*Real products. Real numbers.*
 
 </div>
